@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block title %}Active Alerts{% endblock %}
+{% block topbar_title %}Active Alerts{% endblock %}
+
+{% block content %}
+
+<!-- Summary chips -->
+<div class="kpi-grid" id="alert-kpis" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px;">
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+</div>
+
+<!-- Active failures table -->
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-header">
+    <h3 class="card-title">Active QC Failures</h3>
+    <div class="table-search-wrap">
+      <input class="table-search" type="text" id="alert-search"
+             placeholder="Filter by instrument, test, rule…" />
+    </div>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="data-table" style="table-layout:auto;" id="alert-table">
+      <thead>
+        <tr>
+          <th>Instrument</th>
+          <th>Test</th>
+          <th>Level</th>
+          <th>Status</th>
+          <th>Latest Z</th>
+          <th>Rejections</th>
+          <th>Rules Triggered</th>
+          <th>Last Run</th>
+        </tr>
+      </thead>
+      <tbody id="alert-tbody">
+        <tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:32px;">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Westgard rules reference -->
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Westgard Rules Reference</h3>
+    <span class="topbar-badge">ISO 15189</span>
+  </div>
+  <p style="font-size:13px;color:var(--text-muted);margin:0 0 4px;line-height:1.6;">
+    These six rules define when a QC run is considered out of control. Applied with tiered time windows.
+  </p>
+
+  <div class="rules-grid">
+    <div class="rule-card">
+      <div class="rule-name">1-2s</div>
+      <div class="rule-type warning">Warning</div>
+      <div class="rule-desc">One value exceeds 2 standard deviations. Investigate but do not reject.</div>
+      <div class="rule-threshold">|z| &gt; 2.0</div>
+    </div>
+    <div class="rule-card">
+      <div class="rule-name">1-3s</div>
+      <div class="rule-type rejection">Rejection</div>
+      <div class="rule-desc">One value exceeds 3 standard deviations. Reject the run immediately.</div>
+      <div class="rule-threshold">|z| &gt; 3.0</div>
+    </div>
+    <div class="rule-card">
+      <div class="rule-name">2-2s</div>
+      <div class="rule-type rejection">Rejection</div>
+      <div class="rule-desc">Two consecutive values exceed 2 SD in the same direction. Systematic bias.</div>
+      <div class="rule-threshold">2 consecutive z &gt; 2.0</div>
+    </div>
+    <div class="rule-card">
+      <div class="rule-name">R-4s</div>
+      <div class="rule-type rejection">Rejection</div>
+      <div class="rule-desc">Range between two consecutive values exceeds 4 SD. High random error.</div>
+      <div class="rule-threshold">range &gt; 4σ</div>
+    </div>
+    <div class="rule-card">
+      <div class="rule-name">4-1s</div>
+      <div class="rule-type rejection">Rejection</div>
+      <div class="rule-desc">Four consecutive values all exceed 1 SD in the same direction. Instrument drift.</div>
+      <div class="rule-threshold">4 consecutive |z| &gt; 1.0</div>
+    </div>
+    <div class="rule-card">
+      <div class="rule-name">10x</div>
+      <div class="rule-type rejection">Rejection</div>
+      <div class="rule-desc">Ten consecutive values on the same side of the mean. Strong systematic bias.</div>
+      <div class="rule-threshold">10 consecutive same sign</div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const TEST_UNITS = {
+  "Glucose": "mmol/L", "Creatinine": "umol/L",
+  "Sodium": "mmol/L",  "Potassium": "mmol/L",
+  "ALT": "U/L",        "Hemoglobin": "g/L",
+  "Calcium": "mmol/L", "Bilirubin": "umol/L",
+};
+
+async function loadAlerts() {
+  const res  = await fetch("/qc/failures");
+  const data = await res.json();
+
+  const instruments = [...new Set(data.map(d => d.instrument_id))];
+  const tests       = [...new Set(data.map(d => d.test_name))];
+
+  document.getElementById("alert-kpis").innerHTML = `
+    <div class="kpi-card" style="border-top-color:var(--fail);">
+      <div class="kpi-label">Active Failures</div>
+      <div class="kpi-value">${data.length}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Instruments Affected</div>
+      <div class="kpi-value">${instruments.length}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Tests Affected</div>
+      <div class="kpi-value">${tests.length}</div>
+    </div>
+  `;
+
+  const tbody = document.getElementById("alert-tbody");
+
+  if (!data.length) {
+    tbody.innerHTML = `
+      <tr><td colspan="8" style="text-align:center;color:var(--pass);padding:32px;font-size:13px;">
+        ✓ All QC instrument-test-level combinations are currently passing.
+      </td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = data.map(r => {
+    // Determine worst rule for row border color
+    const rules  = r.rejection_rules || [];
+    const isCrit = rules.some(x => ["1-3s","R-4s"].includes(x));
+    const rowCls = isCrit ? "row-fail" : "row-warn";
+    const badge  = isCrit
+      ? `<span class="badge" style="background:#ef4444;color:white;font-size:14px;padding:6px 14px;border-radius:6px;font-weight:600;">CRITICAL</span>`
+      : `<span class="badge badge-warn" style="font-size:14px;padding:6px 14px;">REJECT</span>`;
+    const ruleHtml = rules.length
+      ? rules.map(x => `<code style="font-size:14px;color:var(--accent);">${x}</code>`).join(" ")
+      : "—";
+    const ts = (r.last_timestamp || "—").replace("T", " ").slice(0, 16);
+    const unit = TEST_UNITS[r.test_name] || "";
+    const testLabel = unit ? `${r.test_name} <span style="font-size:12px;color:var(--text-muted);">(${unit})</span>` : r.test_name;
+    return `
+      <tr class="${rowCls}">
+        <td>${r.instrument_id}</td>
+        <td>${testLabel}</td>
+        <td>${r.qc_level}</td>
+        <td>${badge}</td>
+        <td style="font-family:var(--font-mono);color:var(--fail);">${r.latest_z ?? "—"}</td>
+        <td>${r.n_rejections}</td>
+        <td>${ruleHtml}</td>
+        <td style="color:var(--text-muted);font-size:12px;">${ts}</td>
+      </tr>`;
+  }).join("");
+}
+
+document.getElementById("alert-search").addEventListener("input", function () {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll("#alert-tbody tr").forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
+});
+
+loadAlerts();
+</script>
+{% endblock %}

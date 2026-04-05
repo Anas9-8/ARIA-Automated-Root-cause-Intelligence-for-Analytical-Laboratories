@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Causal Analysis{% endblock %}
+{% block topbar_title %}Causal Analysis{% endblock %}
+
+{% block content %}
+
+<!-- Summary KPIs -->
+<div class="kpi-grid" id="causal-kpis" style="grid-template-columns:repeat(3,1fr);">
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+</div>
+
+<!-- Charts: ATE bar + DAG side by side -->
+<div class="grid-2" style="margin-bottom:0;"><div class="card" style="min-width: 0;">
+      <div class="card-header">
+      <h3 class="card-title">Average Treatment Effects</h3>
+      <span class="topbar-badge">DoWhy · Backdoor</span>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px;line-height:1.6;">
+      How much does a 1-unit increase in each variable shift the QC z-score?
+      Larger magnitude = stronger causal influence on failure.
+    </p>
+    <div id="chart-ate" style="min-height:440px; overflow: visible;"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Causal Graph (DAG)</h3>
+    </div>
+    <p style="font-size:14px;color:var(--text-muted);margin:0 0 12px;line-height:1.6;">
+      Directed Acyclic Graph encoding domain knowledge. Arrows show causal direction,
+      not correlation. Hover nodes for descriptions.
+    </p>
+    <div id="chart-dag" style="min-height:440px; overflow: visible;"></div>
+  </div>
+</div>
+
+<!-- Explanation info box -->
+<div class="info-box">
+  <strong>How to read the ATE chart:</strong>
+  Positive bars (red) = this variable <strong>increases</strong> the z-score deviation when it increases — pushing QC toward failure.
+  Each 1°C above 22°C adds approximately +0.35 to the z-score deviation.
+  Long calibration gaps (>36 h) add systematic negative drift.
+  Reagent lot effects are smaller but detectable.
+</div>
+
+<!-- Detailed results table -->
+<div class="card" style="margin-top:24px;">
+  <div class="card-header">
+    <h3 class="card-title">Detailed ATE Results</h3>
+  </div>
+  <table class="data-table" style="table-layout:auto;">
+    <thead>
+      <tr>
+        <th>Variable</th>
+        <th>ATE on Z-Score</th>
+        <th>Interpretation</th>
+        <th>Impact</th>
+      </tr>
+    </thead>
+    <tbody id="ate-tbody">
+      <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:32px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="info-box" style="border-left:3px solid var(--text-muted);">
+  <strong>Method:</strong>
+  ATEs estimated using DoWhy's backdoor linear regression estimator on the causal DAG.
+  Temperature and calibration drift are upstream causes; confounders are controlled via the backdoor criterion.
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ATE_LABELS = {
+  lab_temp_c:       "Lab Temperature (°C)",
+  hours_since_cal:  "Hours Since Calibration",
+  reagent_lot_bias: "Reagent Lot Bias",
+};
+
+function interpretATE(v) {
+  const a = Math.abs(v);
+  if (a > 0.3)  return v > 0 ? "Strongly increases failure risk" : "Strongly reduces failure risk";
+  if (a > 0.15) return "Moderate causal effect";
+  if (a > 0.05) return "Weak but detectable effect";
+  return "Negligible effect";
+}
+
+function impactBadge(v) {
+  const a = Math.abs(v);
+  if (a > 0.3)  return `<span class="badge badge-fail">HIGH</span>`;
+  if (a > 0.15) return `<span class="badge badge-warn">MEDIUM</span>`;
+  return `<span class="badge badge-pass">LOW</span>`;
+}
+
+async function loadCausal() {
+  const res  = await fetch("/causal/analysis");
+  const data = await res.json();
+  const ates = data.ates || {};
+
+  const entries = Object.entries(ates).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const [topKey, topVal] = entries[0] || ["—", 0];
+
+  document.getElementById("causal-kpis").innerHTML = `
+    <div class="kpi-card">
+      <div class="kpi-label">Variables Analyzed</div>
+      <div class="kpi-value">${entries.length}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Top Causal Factor</div>
+      <div class="kpi-value" style="font-size:18px;">${(ATE_LABELS[topKey] || topKey).split(" ")[0]}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Strongest ATE</div>
+      <div class="kpi-value">${typeof topVal === "number" ? topVal.toFixed(4) : "—"}</div>
+    </div>
+  `;
+
+  renderATEChart(ates, "chart-ate");
+  renderCausalGraph("chart-dag");
+
+  document.getElementById("ate-tbody").innerHTML = entries.map(([k, v]) => `
+    <tr>
+      <td>${ATE_LABELS[k] || k}</td>
+      <td style="font-family:var(--font-mono);font-size:13px;">${v.toFixed(6)}</td>
+      <td style="color:var(--text-muted);font-size:13px;">${interpretATE(v)}</td>
+      <td>${impactBadge(v)}</td>
+    </tr>
+  `).join("");
+}
+
+loadCausal();
+</script>
+{% endblock %}

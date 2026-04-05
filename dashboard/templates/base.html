@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}ARIA{% endblock %} — Automated Root-cause Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- ── Fixed sidebar ── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-mark">▲</span>
+      <span class="logo-text">ARIA</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="/"             class="nav-link {% if page == 'overview'     %}active{% endif %}">
+        <span class="nav-icon">◈</span> QC Overview
+      </a>
+      <a href="/causal"       class="nav-link {% if page == 'causal'       %}active{% endif %}">
+        <span class="nav-icon">⬡</span> Causal Analysis
+      </a>
+      <a href="/explainer"    class="nav-link {% if page == 'explainer'    %}active{% endif %}">
+        <span class="nav-icon">◎</span> Root Cause Explainer
+      </a>
+      <a href="/alerts"       class="nav-link {% if page == 'alerts'       %}active{% endif %}">
+        <span class="nav-icon">◉</span> Active Alerts
+      </a>
+      <a href="/architecture" class="nav-link {% if page == 'architecture' %}active{% endif %}">
+        <span class="nav-icon">⬢</span> Architecture
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="status-card">
+        <div class="status-dot"></div>
+        <div>
+          <div class="status-label">System Status</div>
+          <div class="status-value">Operational</div>
+        </div>
+      </div>
+      <div class="version-label">ARIA v1.0.0</div>
+    </div>
+  </aside>
+
+  <!-- ── Fixed top bar ── -->
+  <header class="topbar">
+    <div class="topbar-title">{% block topbar_title %}{% endblock %}</div>
+    <div class="topbar-right">
+      <span class="topbar-badge">Live Data</span>
+      <span class="topbar-time" id="clock"></span>
+    </div>
+  </header>
+
+  <!-- ── Scrollable main area ── -->
+  <main class="main-content">
+    <div class="page-container">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <!-- Scripts -->
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="/static/charts.js?v=2"></script>
+  <script>
+    function updateClock() {
+      const now = new Date();
+      document.getElementById("clock").textContent =
+        now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

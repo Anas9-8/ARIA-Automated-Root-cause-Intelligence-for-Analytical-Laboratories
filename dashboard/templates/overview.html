@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}QC Overview{% endblock %}
+{% block topbar_title %}QC Overview{% endblock %}
+
+{% block content %}
+
+<!-- KPI row (skeleton until JS loads) -->
+<div class="kpi-grid" id="kpi-row">
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+  <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+</div>
+
+<!-- Charts row: fixed donut + flexible bar -->
+<div class="charts-grid">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Status Distribution</h3>
+    </div>
+    <div id="chart-donut"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Status by Instrument</h3>
+    </div>
+    <div id="chart-bar"></div>
+  </div>
+</div>
+
+<!-- QC Status table -->
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-header">
+    <h3 class="card-title">QC Status Table</h3>
+    <div class="table-search-wrap">
+      <input class="table-search" type="text" id="qc-search"
+             placeholder="Filter by instrument, test, status…" />
+    </div>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="data-table qc-table" id="qc-table">
+      <thead>
+        <tr>
+          <th>Instrument</th>
+          <th>Test</th>
+          <th>Level</th>
+          <th>Status</th>
+          <th>Latest Z</th>
+          <th>Mean Z (10)</th>
+          <th>Reject.</th>
+          <th>Rules</th>
+          <th>Last Run</th>
+        </tr>
+      </thead>
+      <tbody id="qc-tbody">
+        <tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:32px;">
+          Loading…
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- MIMIC disclaimer -->
+<div class="info-box" style="margin-top:0;border-left:3px solid var(--text-muted);">
+  <strong>Data note:</strong>
+  QC records are synthetically generated. Value distributions are calibrated against real
+  <strong>MIMIC-IV Demo</strong> lab data (PhysioNet, 2023) to ensure clinical accuracy.
+  This data does not contain real patient measurements.
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const statusOrder = { FAIL: 0, WARNING: 1, PASS: 2 };
+
+async function loadOverview() {
+  const [sRes, qRes] = await Promise.all([
+    fetch("/summary"),
+    fetch("/qc/status"),
+  ]);
+  const summary = await sRes.json();
+  const qc      = await qRes.json();
+
+  // KPI cards
+  document.getElementById("kpi-row").innerHTML = `
+    <div class="kpi-card">
+      <div class="kpi-label">Total QC Records</div>
+      <div class="kpi-value">${summary.total_records.toLocaleString()}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Instruments</div>
+      <div class="kpi-value">${summary.instruments}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Tests</div>
+      <div class="kpi-value">${summary.tests}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Reagent Lots</div>
+      <div class="kpi-value">${summary.reagent_lots}</div>
+    </div>
+  `;
+
+  // Status donut
+  const countMap = {};
+  qc.forEach(r => { countMap[r.status] = (countMap[r.status] || 0) + 1; });
+  renderStatusDonut(
+    Object.entries(countMap).map(([status, count]) => ({ status, count })),
+    "chart-donut"
+  );
+
+  // Instrument bar — aggregate counts
+  const instrMap = {};
+  qc.forEach(r => {
+    const key = `${r.instrument_id}|${r.status}`;
+    if (!instrMap[key]) instrMap[key] = { instrument_id: r.instrument_id, status: r.status, count: 0 };
+    instrMap[key].count++;
+  });
+  renderInstrumentBar(Object.values(instrMap), "chart-bar");
+
+  // Table (sorted FAIL → WARNING → PASS)
+  const sorted = [...qc].sort((a, b) =>
+    (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3)
+  );
+  renderQCTable(sorted);
+}
+
+function renderQCTable(rows) {
+  const tbody = document.getElementById("qc-tbody");
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:32px;">No records</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const rc    = r.status === "FAIL" ? "row-fail" : r.status === "WARNING" ? "row-warn" : "";
+    const badge = r.status === "FAIL"
+      ? `<span class="badge badge-fail">FAIL</span>`
+      : r.status === "WARNING"
+      ? `<span class="badge badge-warn">WARN</span>`
+      : `<span class="badge badge-pass">PASS</span>`;
+    const rules = r.rejection_rules && r.rejection_rules.length
+      ? r.rejection_rules.map(x => `<code style="font-size:11px;color:var(--accent);">${x}</code>`).join(" ")
+      : "—";
+    const ts = (r.last_timestamp || "—").replace("T", " ").slice(0, 16);
+    return `
+      <tr class="${rc}">
+        <td>${r.instrument_id}</td>
+        <td>${r.test_name}</td>
+        <td>${r.qc_level}</td>
+        <td>${badge}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;">${r.latest_z ?? "—"}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;">${r.mean_z_last_10 ?? "—"}</td>
+        <td>${r.n_rejections}</td>
+        <td>${rules}</td>
+        <td style="color:var(--text-muted);font-size:12px;">${ts}</td>
+      </tr>`;
+  }).join("");
+}
+
+// Live search filter
+document.getElementById("qc-search").addEventListener("input", function () {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll("#qc-tbody tr").forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? "" : "none";
+  });
+});
+
+loadOverview();
+</script>
+{% endblock %}

@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}Root Cause Explainer{% endblock %}
+{% block topbar_title %}Root Cause Explainer{% endblock %}
+
+{% block content %}
+
+<div class="grid-2" style="margin-bottom:20px;">
+
+  <!-- Left: failure selector + details -->
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Select Failure</h3>
+      <span class="topbar-badge" id="failure-badge">—</span>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);margin:0 0 16px;line-height:1.6;">
+      Use the slider to browse QC failures. Each record's conditions are shown below.
+    </p>
+
+    <!-- Failure selector slider -->
+    <div class="slider-group">
+      <div class="slider-header">
+        <label>Failure <span id="slider-pos">1</span> of <span id="slider-total">—</span></label>
+        <span class="slider-value" id="slider-badge">1</span>
+      </div>
+      <input type="range" id="failure-slider" min="0" max="0" value="0"
+             oninput="document.getElementById('slider-badge').textContent = +this.value + 1" />
+    </div>
+
+    <!-- Failed run details table -->
+    <div id="failure-meta">
+      <p style="font-size:13px;color:var(--text-muted);">Select a failure to see conditions.</p>
+    </div>
+  </div>
+
+  <!-- Right: z-score gauge -->
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Z-Score</h3>
+    </div>
+    <div id="chart-gauge-placeholder"
+         style="height:360px;display:flex;align-items:center;justify-content:center;
+                color:var(--text-muted);font-size:14px;">
+      Select a failure
+    </div>
+    <div id="chart-gauge" style="display:none;"></div>
+  </div>
+
+</div>
+
+<!-- Root cause explanation card (hidden until loaded) -->
+<div class="card" id="explanation-card" style="display:none;margin-bottom:20px;">
+  <div class="card-header">
+    <h3 class="card-title">Root Cause Analysis</h3>
+    <span class="topbar-badge badge-fail" id="exp-status-badge">FAIL</span>
+  </div>
+  <div id="explanation-content"></div>
+</div>
+
+<!-- Counterfactual simulation card (hidden until failure selected) -->
+<div class="card" id="cf-card" style="display:none;">
+  <div class="card-header">
+    <h3 class="card-title">Counterfactual Simulation</h3>
+  </div>
+  <p style="font-size:13px;color:var(--text-muted);margin:0 0 24px;line-height:1.6;">
+    Adjust conditions below and simulate: <em>if the lab had been different, would this run have passed?</em>
+  </p>
+
+  <!-- Temperature slider -->
+  <div class="slider-group">
+    <div class="slider-header">
+      <label>Lab Temperature (°C) — original: <span id="orig-temp" style="font-family:var(--font-mono);">—</span>°C</label>
+      <span class="slider-value" id="temp-val">22.0</span>
+    </div>
+    <input type="range" id="temp-slider" min="15" max="35" step="0.1" value="22.0"
+           oninput="document.getElementById('temp-val').textContent = parseFloat(this.value).toFixed(1)" />
+    <div class="slider-labels"><span>15°C (cool)</span><span>35°C (hot)</span></div>
+  </div>
+
+  <!-- Hours since calibration slider -->
+  <div class="slider-group">
+    <div class="slider-header">
+      <label>Hours Since Calibration — original: <span id="orig-hours" style="font-family:var(--font-mono);">—</span> h</label>
+      <span class="slider-value" id="hours-val">12</span>
+    </div>
+    <input type="range" id="hours-slider" min="1" max="48" step="1" value="12"
+           oninput="document.getElementById('hours-val').textContent = this.value" />
+    <div class="slider-labels"><span>1 h (fresh)</span><span>48 h (stale)</span></div>
+  </div>
+
+  <button class="btn-primary" id="run-sim-btn">Run Simulation</button>
+
+  <!-- Result box (shown after simulation) -->
+  <div id="cf-result" style="margin-top:20px;"></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let failures = [];
+let currentRowIndex = null;
+
+async function loadFailures() {
+  const res  = await fetch("/api/failures");
+  failures   = await res.json();
+
+  const slider = document.getElementById("failure-slider");
+  slider.max   = failures.length - 1;
+  document.getElementById("slider-total").textContent = failures.length;
+
+  if (failures.length > 0) selectFailure(0);
+}
+
+function selectFailure(idx) {
+  const f = failures[idx];
+  if (!f) return;
+  currentRowIndex = f.original_index;
+
+  document.getElementById("slider-pos").textContent   = idx + 1;
+  document.getElementById("failure-badge").textContent = `#${idx + 1}`;
+
+  // Failed run detail table
+  document.getElementById("failure-meta").innerHTML = `
+    <table class="detail-table">
+      <tr><td>Instrument</td><td>${f.instrument_id}</td></tr>
+      <tr><td>Test</td><td>${f.test_name}</td></tr>
+      <tr><td>QC Level</td><td>${f.qc_level}</td></tr>
+      <tr><td>Reagent Lot</td><td>${f.reagent_lot}</td></tr>
+      <tr class="highlight-fail"><td>Z-Score</td><td>${f.z_score}</td></tr>
+      <tr><td>Measured Value</td><td>${f.measured_value != null ? f.measured_value : "—"} ${f.unit || ""}</td></tr>
+      <tr><td>Lab Temp</td><td>${f.lab_temp_c} °C</td></tr>
+      <tr><td>Hours Since Cal</td><td>${f.hours_since_cal} h</td></tr>
+      <tr><td>Humidity</td><td>${f.humidity_pct} %</td></tr>
+    </table>
+  `;
+
+  // Pre-fill sliders with actual values
+  const tempSlider  = document.getElementById("temp-slider");
+  const hoursSlider = document.getElementById("hours-slider");
+  tempSlider.value  = f.lab_temp_c;
+  hoursSlider.value = f.hours_since_cal;
+  document.getElementById("temp-val").textContent   = parseFloat(f.lab_temp_c).toFixed(1);
+  document.getElementById("hours-val").textContent  = f.hours_since_cal;
+  document.getElementById("orig-temp").textContent  = parseFloat(f.lab_temp_c).toFixed(1);
+  document.getElementById("orig-hours").textContent = f.hours_since_cal;
+
+  // Render gauge — hide placeholder, show chart div
+  document.getElementById("chart-gauge-placeholder").style.display = "none";
+  const gaugeEl = document.getElementById("chart-gauge");
+  gaugeEl.style.display = "";
+  gaugeEl.style.height = "360px";
+  renderZGauge(f.z_score, "chart-gauge");
+
+  // Show cards
+  document.getElementById("cf-card").style.display = "";
+  document.getElementById("cf-result").innerHTML   = "";
+
+  loadExplanation(f.original_index);
+}
+
+async function loadExplanation(rowIndex) {
+  document.getElementById("explanation-card").style.display = "";
+  document.getElementById("explanation-content").innerHTML  =
+    `<p style="color:var(--text-muted);font-size:13px;">Analyzing root cause…</p>`;
+
+  const res  = await fetch(`/causal/explain/${rowIndex}`);
+  const data = await res.json();
+
+  const badge = document.getElementById("exp-status-badge");
+  badge.textContent = data.status || "FAIL";
+  badge.className = `topbar-badge ${
+    (data.status || "FAIL") === "FAIL" ? "badge-fail" : 
+    data.status === "WARNING" ? "badge-warn" : "badge-pass"
+  }`;
+
+  const FACTOR_UNITS = {
+    "Lab temperature (°C)":         "°C",
+    "Relative humidity (%)":        "%",
+    "Hours since last calibration": "h",
+  };
+
+  function renderFactor(label, value) {
+    // Detect reagent lot entries (label starts with "Reagent Lot ")
+    const isLot = label.startsWith("Reagent Lot ");
+    if (isLot) {
+      const isStrong = label.includes("strong negative");
+      const isKnown  = label.includes("known negative");
+      const isRef    = label.includes("reference lot");
+      const badgeBg  = isStrong ? "#ef4444" : isKnown ? "#f59e0b" : "#22c55e";
+      const badgeTx  = isStrong ? "#fff"    : isKnown ? "#000"    : "#000";
+      const badgeTxt = isStrong ? "⚠ STRONG BIAS" : isKnown ? "⚠ KNOWN BIAS" : "✓ STABLE";
+      const displayLabel = "Reagent Lot";
+      const lotVal = (value && value !== "nan") ? value : "unknown";
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    padding:8px 12px;margin-bottom:4px;background:rgba(248,113,113,0.06);
+                    border-radius:6px;border:1px solid rgba(248,113,113,0.3);">
+          <span style="font-size:13px;">${displayLabel}</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <span style="font-family:var(--font-mono);font-size:13px;color:var(--fail);">${lotVal}</span>
+            <span style="background:${badgeBg};color:${badgeTx};font-size:11px;font-weight:700;
+                         padding:2px 8px;border-radius:4px;">${badgeTxt}</span>
+          </span>
+        </div>`;
+    }
+    // Environmental / calibration factors
+    const unit   = FACTOR_UNITS[label] !== undefined ? FACTOR_UNITS[label] : "";
+    const valStr = typeof value === "number"
+      ? `${value.toFixed(2)}${unit ? " " + unit : ""}`
+      : (value != null && value !== "N/A" ? String(value) : "N/A");
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;
+                  padding:8px 12px;margin-bottom:4px;background:rgba(248,113,113,0.06);
+                  border-radius:6px;border:1px solid rgba(248,113,113,0.3);">
+        <span style="font-size:13px;">${label}</span>
+        <span style="font-family:var(--font-mono);font-size:13px;color:var(--fail);">${valStr}</span>
+      </div>`;
+  }
+
+  const factors = data.top_factors || [];
+  const factorsHTML = factors.length ? `
+    <div style="margin-top:16px;">
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;
+                  letter-spacing:.08em;margin-bottom:8px;">Contributing Factors</div>
+      ${factors.map(([label, value]) => renderFactor(label, value)).join("")}
+    </div>` : "";
+
+  document.getElementById("explanation-content").innerHTML = `
+    <p style="font-size:14px;line-height:1.65;margin:0 0 8px;">${data.explanation || "No explanation available."}</p>
+    ${data.recommendation ? `
+      <div class="info-box" style="margin-top:12px;">
+        <strong>Recommendation:</strong> ${data.recommendation}
+      </div>` : ""}
+    ${factorsHTML}
+  `;
+}
+
+// Slider navigation
+document.getElementById("failure-slider").addEventListener("input", function () {
+  selectFailure(parseInt(this.value));
+});
+
+// Run simulation
+document.getElementById("run-sim-btn").addEventListener("click", async function () {
+  if (currentRowIndex === null) return;
+
+  const temp  = parseFloat(document.getElementById("temp-slider").value);
+  const hours = parseInt(document.getElementById("hours-slider").value);
+  const resultEl = document.getElementById("cf-result");
+  resultEl.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">Simulating…</p>`;
+
+  const res  = await fetch("/causal/counterfactual", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      row_index:       currentRowIndex,
+      lab_temp_c:      temp,
+      hours_since_cal: hours,
+    }),
+  });
+  const data = await res.json();
+
+  const status = data.simulated_status || "FAIL";
+  const boxClass = status === "PASS" ? "result-pass" : status === "WARNING" ? "result-warn" : "result-fail";
+  const icon = status === "PASS" ? "✓" : status === "WARNING" ? "⚠" : "✗";
+  const title = status === "PASS" ? "Would Have PASSED" : status === "WARNING" ? "Still WARNING" : "Still FAILS";
+  const delta = data.z_change != null ? data.z_change : (data.simulated_z - data.original_z);
+  const deltaStr = (delta >= 0 ? "+" : "") + delta.toFixed(3);
+  resultEl.innerHTML = `
+    <div class="result-box ${boxClass}">
+      <div class="result-icon">${icon}</div>
+      <div class="result-title">${title}</div>
+      <div style="font-family:var(--font-mono);font-size:15px;margin:12px 0;color:#e2e8f0;letter-spacing:0.02em;">
+        Original Z: ${data.original_z?.toFixed(3) ?? "—"} → Simulated Z: ${data.simulated_z?.toFixed(3) ?? "—"} (${deltaStr})
+      </div>
+      <div style="display:flex;gap:36px;justify-content:center;margin:8px 0 12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Original Status</div>
+          <div style="font-family:var(--font-mono);font-size:16px;">${data.original_status ?? "—"}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Simulated Status</div>
+          <div style="font-family:var(--font-mono);font-size:16px;">${data.simulated_status ?? "—"}</div>
+        </div>
+      </div>
+      <div class="result-detail">${data.conclusion || data.interpretation || ""}</div>
+    </div>
+  `;
+});
+
+loadFailures();
+</script>
+{% endblock %}
