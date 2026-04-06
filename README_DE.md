@@ -22,7 +22,7 @@ ARIA beantwortet diese Frage in Sekunden — mit kausaler KI statt reiner Statis
 - Kontrafaktische Simulation: "Was wäre gewesen, wenn X anders gewesen wäre?"
 - FastAPI REST-Schnittstelle für LIMS-Integration
 - MCP-Server für KI-Assistenten (Claude und andere)
-- Streamlit-Dashboard mit interaktiven Architekturdiagrammen
+- Web-Dashboard mit 5 Seiten (FastAPI + Jinja2 + Plotly.js)
 
 ## Schnellstart
 
@@ -32,7 +32,7 @@ make data
 make run
 ```
 
-Öffnen: http://localhost:8501
+Öffnen: http://localhost:8000
 
 ## Datenquellen
 
@@ -55,7 +55,7 @@ Der synthetische Generator wurde anhand echter MIMIC-IV-Demo-Laborverteilungen
 
 ## Technologie
 
-Python 3.11, DoWhy, pgmpy, FastAPI, MCP, Streamlit, Docker
+Python 3.11, DoWhy, pgmpy, FastAPI, Jinja2, Plotly.js, MCP, SQLite, Docker
 
 ## Kernaussage
 
