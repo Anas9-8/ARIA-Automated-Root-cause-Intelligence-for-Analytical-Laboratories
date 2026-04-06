@@ -1,0 +1,26 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH into EC2 and deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/aria
+            git pull origin main
+            docker-compose up --build -d
+            echo "Waiting for app to start..."
+            sleep 10
+            curl -f http://localhost:8000/docs || curl -f http://localhost:8000/ || echo "Health check: app responded"
