@@ -1,20 +1,8 @@
-# Docker Compose: runs ARIA dashboard and API together.
-
-version: "3.9"
+# Docker Compose: runs the ARIA FastAPI dashboard + API (single service).
 
 services:
-  dashboard:
+  aria:
     build: .
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./data:/app/data
-    environment:
-      - DEBUG=false
-
-  api:
-    build: .
-    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     volumes:

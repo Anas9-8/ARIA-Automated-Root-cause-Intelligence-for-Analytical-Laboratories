@@ -19,8 +19,26 @@ jobs:
           script: |
             set -e
             cd ~/aria
+
             git pull origin main
-            docker-compose up --build -d
-            echo "Waiting for app to start..."
-            sleep 10
-            curl -f http://localhost:8000/docs || curl -f http://localhost:8000/ || echo "Health check: app responded"
+
+            docker-compose up --build -d --remove-orphans
+
+            echo "Waiting for app to become ready..."
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "App is up (attempt ${i})"
+                break
+              fi
+              if [ "${i}" -eq 12 ]; then
+                echo "App did not respond after 60 seconds"
+                docker-compose logs --tail 30
+                exit 1
+              fi
+              echo "Attempt ${i}: not ready yet, waiting 5s..."
+              sleep 5
+            done
+
+            echo "Deploy complete. Verifying dashboard..."
+            curl -sf http://localhost:8000/causal > /dev/null && echo "Dashboard OK"
+            curl -sf http://localhost:8000/docs   > /dev/null && echo "API docs OK"
