@@ -2,7 +2,55 @@
 
 **Automated Root-cause Intelligence for Analytical Laboratories**
 
-ARIA is a causal AI system that monitors laboratory QC data and identifies the root cause of failures. When a QC run fails, ARIA does not just report the failure — it uses a causal graph to tell you which variable caused it and what would have had to change for the run to pass.
+[![Live on AWS](https://img.shields.io/badge/Live%20on-AWS%20EC2-FF9900?style=flat&logo=amazon-aws)](http://3.78.247.13:8000/causal)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=flat&logo=github-actions)](https://github.com/Anas9-8/ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories/actions)
+[![Docker](https://img.shields.io/badge/Deployed%20with-Docker-2496ED?style=flat&logo=docker)](http://3.78.247.13:8000/health)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.116-009688?style=flat&logo=fastapi)](http://3.78.247.13:8000/docs)
+
+---
+
+## Live Deployment — No Installation Required
+
+The application is running on AWS EC2. Open any link below in a browser right now:
+
+| | Link |
+|---|---|
+| Dashboard | http://3.78.247.13:8000/causal |
+| QC Overview | http://3.78.247.13:8000/ |
+| Root Cause Explainer | http://3.78.247.13:8000/explainer |
+| Active Alerts | http://3.78.247.13:8000/alerts |
+| API Docs (Swagger) | http://3.78.247.13:8000/docs |
+| Health Check | http://3.78.247.13:8000/health |
+| CI/CD Pipeline | https://github.com/Anas9-8/ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories/actions |
+
+No account, no login, no setup. The full causal AI analysis and all interactive charts are live.
+
+---
+
+## CI/CD Pipeline
+
+Every `git push` to `main` triggers an automated deployment:
+
+```
+git push origin main
+       |
+       v
+GitHub Actions (.github/workflows/deploy.yml)
+       |
+       v
+SSH into AWS EC2 (appleboy/ssh-action)
+       |
+       +-- git pull origin main
+       +-- docker-compose down --remove-orphans
+       +-- docker-compose up --build -d
+       +-- health check loop: polls /health every 5s (60s timeout)
+       +-- verify /causal and /docs respond
+       |
+       v
+Live at http://3.78.247.13:8000
+```
+
+The deployment is fully unattended. Secrets (EC2 host IP and private SSH key) are stored in GitHub Actions and never appear in the repository.
 
 ---
 
@@ -22,6 +70,20 @@ The full analysis — from raw QC data to counterfactual answer — is accessibl
 
 ---
 
+## Demo
+
+![ARIA Dashboard Demo](docs/demo.gif)
+
+The GIF shows the five dashboard pages: QC Overview with live status charts, Causal Analysis with the ATE bar chart and DAG, Root Cause Explainer with counterfactual simulation, Active Alerts with Westgard severity classification, and the Architecture diagram.
+
+To regenerate after UI changes:
+
+```bash
+bash scripts/generate_demo.sh
+```
+
+---
+
 ## Key Features
 
 - **Westgard multi-rule QC engine** — six rules (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x) with tiered time windows. Identifies warning and rejection events independently.
@@ -37,48 +99,37 @@ The full analysis — from raw QC data to counterfactual answer — is accessibl
 
 ---
 
-## System Architecture
+## Technology Stack
 
-```
-MIMIC-IV Demo (PhysioNet)
-        |
-        v
-data/synthetic/generate.py   <-- calibrates value distributions
-        |
-        v
-data/synthetic/qc_data.csv   <-- 116,640 QC records (180 days)
-        |
-        v
-src/ingestion/loader.py      <-- CSV parsing, type coercion
-        |
-        +---> src/qc/rules.py        <-- Westgard engine (6 rules)
-        |
-        +---> src/causal/engine.py   <-- DoWhy DAG + ATE estimation
-                    |
-                    v
-             src/explainer/explainer.py   <-- root cause + counterfactuals
-                    |
-                    v
-             src/api/main.py              <-- FastAPI (port 8000)
-             src/storage/db.py            <-- SQLite persistence
-             src/mcp/server.py            <-- MCP tool server
-                    |
-                    v
-             dashboard/templates/         <-- HTML pages (Jinja2)
-             dashboard/static/            <-- CSS + Plotly.js charts
-```
+| Tool | Version | Role |
+|------|---------|------|
+| Python | 3.11 | All backend logic |
+| FastAPI | 0.116 | REST API + HTML page serving |
+| Uvicorn | 0.30 | ASGI server |
+| Jinja2 | 3.1 | HTML template engine |
+| Plotly.js | 2.32 | All interactive charts |
+| DoWhy | 0.11 | Causal model + ATE estimation |
+| pgmpy | 0.1.25 | DAG backend for DoWhy |
+| scikit-learn | 1.5 | Linear regression estimator |
+| pandas | 2.2 | Data loading and transformation |
+| numpy | 1.26 | Z-score computation |
+| SQLite | stdlib | QC result history |
+| MCP | 1.0 | AI assistant integration |
+| Docker | — | Container packaging |
+| GitHub Actions | — | CI/CD pipeline |
+| AWS EC2 | — | Production hosting |
 
 ---
 
 ## Dashboard Pages
 
-| Page | URL | What it shows |
-|------|-----|---------------|
-| QC Overview | `/` | KPI cards, status donut chart, grouped bar by instrument, searchable QC status table |
-| Causal Analysis | `/causal` | ATE horizontal bar chart, 7-node causal DAG, detailed results table with impact ratings |
-| Root Cause Explainer | `/explainer` | Failure slider (51 failures), z-score gauge, ranked contributing factors, counterfactual simulation |
-| Active Alerts | `/alerts` | All current FAIL-status records with severity classification, Westgard rule reference cards |
-| Architecture | `/architecture` | Interactive data flow diagram, tool stack chart, annotated file tree |
+| Page | Live URL | What it shows |
+|------|----------|---------------|
+| QC Overview | [/](http://3.78.247.13:8000/) | KPI cards, status donut chart, grouped bar by instrument, searchable QC status table |
+| Causal Analysis | [/causal](http://3.78.247.13:8000/causal) | ATE horizontal bar chart, 7-node causal DAG, detailed results table with impact ratings |
+| Root Cause Explainer | [/explainer](http://3.78.247.13:8000/explainer) | Failure slider (51 failures), z-score gauge, ranked contributing factors, counterfactual simulation |
+| Active Alerts | [/alerts](http://3.78.247.13:8000/alerts) | All current FAIL-status records with severity classification, Westgard rule reference cards |
+| Architecture | [/architecture](http://3.78.247.13:8000/architecture) | Interactive data flow diagram, tool stack chart, annotated file tree |
 
 ---
 
@@ -129,59 +180,45 @@ The QC time-series data is synthetic by design. Real Westgard calibration logs a
 
 ---
 
-## Technology Stack
+## System Architecture
 
-| Tool | Version | Role |
-|------|---------|------|
-| Python | 3.11 | All backend logic |
-| FastAPI | 0.116 | REST API + HTML page serving |
-| Uvicorn | 0.30 | ASGI server |
-| Jinja2 | 3.1 | HTML template engine |
-| Plotly.js | 2.32 | All interactive charts |
-| DoWhy | 0.11 | Causal model + ATE estimation |
-| pgmpy | 0.1.25 | DAG backend for DoWhy |
-| scikit-learn | 1.5 | Linear regression estimator |
-| pandas | 2.2 | Data loading and transformation |
-| numpy | 1.26 | Z-score computation |
-| SQLite | stdlib | QC result history |
-| MCP | 1.0 | AI assistant integration |
-| Docker | — | Container packaging |
-| GitHub Actions | — | CI/CD pipeline |
-
----
-
-## Local Setup
-
-**Requirements:** Python 3.11+, make
-
-```bash
-git clone https://github.com/Anas9-8/ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories.git
-cd ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories
-
-make setup     # creates .venv and installs dependencies
-make data      # generates synthetic QC dataset
-make run       # starts FastAPI on http://localhost:8000
 ```
-
-Open http://localhost:8000
-
----
-
-## Docker Setup
-
-```bash
-docker-compose up --build -d
+MIMIC-IV Demo (PhysioNet)
+        |
+        v
+data/synthetic/generate.py   <-- calibrates value distributions
+        |
+        v
+data/synthetic/qc_data.csv   <-- 116,640 QC records (180 days)
+        |
+        v
+src/ingestion/loader.py      <-- CSV parsing, type coercion
+        |
+        +---> src/qc/rules.py        <-- Westgard engine (6 rules)
+        |
+        +---> src/causal/engine.py   <-- DoWhy DAG + ATE estimation
+                    |
+                    v
+             src/explainer/explainer.py   <-- root cause + counterfactuals
+                    |
+                    v
+             src/api/main.py              <-- FastAPI (port 8000)
+             src/storage/db.py            <-- SQLite persistence
+             src/mcp/server.py            <-- MCP tool server
+                    |
+                    v
+             dashboard/templates/         <-- HTML pages (Jinja2)
+             dashboard/static/            <-- CSS + Plotly.js charts
+                    |
+                    v
+             AWS EC2 (docker-compose + GitHub Actions)
 ```
-
-The container builds, generates the synthetic data inside the image, and starts the FastAPI server on port 8000. The `data/` directory is mounted as a volume so the SQLite database persists across restarts.
 
 ---
 
 ## REST API
 
-With the app running, interactive API docs are at http://localhost:8000/docs
-
-Key endpoints:
+Live interactive docs: http://3.78.247.13:8000/docs
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -199,7 +236,7 @@ Key endpoints:
 
 ## MCP Server
 
-ARIA includes an MCP server that exposes its analysis as tools for AI assistants. To start it:
+ARIA includes an MCP server that exposes its analysis as tools for AI assistants. To start it locally:
 
 ```bash
 make mcp
@@ -209,46 +246,34 @@ The server follows Anthropic's Model Context Protocol. It exposes QC status, cau
 
 ---
 
-## Deployment
+## Local Development (Optional)
 
-### GitHub Actions CI/CD
+The app is already live on AWS. Local setup is only needed if you want to modify the code.
 
-Every push to `main` triggers an automatic deployment to EC2:
-
-1. GitHub Actions connects to the EC2 instance over SSH.
-2. On the server: `git pull origin main` fetches the latest code.
-3. `docker-compose up --build -d --remove-orphans` rebuilds and restarts the container.
-4. A health check confirms the app is responding on port 8000.
-
-Workflow file: `.github/workflows/deploy.yml`
-
-### Required GitHub Secrets
-
-Add these at **Settings > Secrets and variables > Actions** in the repository:
-
-| Secret | Value |
-|--------|-------|
-| `EC2_HOST` | Public IP of the EC2 instance |
-| `EC2_SSH_KEY` | Contents of the private `.pem` key file |
-
-### Manual deployment on EC2
+**Requirements:** Python 3.11+, make
 
 ```bash
-ssh -i ~/.ssh/aria-key.pem ec2-user@<EC2_IP>
-cd ~/aria
-git pull origin main
-docker-compose up --build -d --remove-orphans
+git clone https://github.com/Anas9-8/ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories.git
+cd ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories
+
+make setup     # creates .venv and installs dependencies
+make data      # generates synthetic QC dataset
+make run       # starts FastAPI on http://localhost:8000
 ```
 
----
+### Docker (local)
 
-## Running Tests
+```bash
+docker-compose up --build -d
+```
+
+The container builds, generates synthetic data, and starts the FastAPI server on port 8000. The `data/` directory is mounted as a volume so the SQLite database persists across restarts.
+
+### Tests
 
 ```bash
 make test
 ```
-
-Three test modules:
 
 - `tests/test_qc.py` — unit tests for all six Westgard rules
 - `tests/test_causal.py` — integration test for the causal engine and DAG loading
@@ -256,16 +281,34 @@ Three test modules:
 
 ---
 
-## Demo
+## Deployment on AWS EC2
 
-![ARIA Dashboard Demo](docs/demo.gif)
+### How it works
 
-The GIF shows the five main dashboard pages: QC Overview with live status charts, Causal Analysis with the ATE bar chart and DAG, Root Cause Explainer with counterfactual simulation, Active Alerts with Westgard severity classification, and the Architecture page with the data flow diagram.
+The deploy workflow (`.github/workflows/deploy.yml`) runs on every push to `main`:
 
-To regenerate the demo after UI changes:
+1. GitHub Actions SSHs into the EC2 instance using a stored private key.
+2. `git pull origin main` fetches the latest code.
+3. `docker-compose down --remove-orphans` stops and removes existing containers cleanly.
+4. `docker-compose up --build -d` rebuilds the image and starts the container.
+5. A retry loop polls `/health` every 5 seconds for up to 60 seconds.
+6. Final checks confirm `/causal` and `/docs` both respond before marking the deploy successful.
+
+### GitHub Secrets required
+
+| Secret | Value |
+|--------|-------|
+| `EC2_HOST` | Public IP of the EC2 instance |
+| `EC2_SSH_KEY` | Contents of the private `.pem` key file |
+
+### Manual redeploy from EC2
 
 ```bash
-bash scripts/generate_demo.sh
+ssh -i ~/.ssh/aria-key.pem ec2-user@3.78.247.13
+cd ~/aria
+git pull origin main
+docker-compose down --remove-orphans
+docker-compose up --build -d
 ```
 
 ---
@@ -281,6 +324,10 @@ ARIA/
 ├── .env.example
 ├── README.md
 ├── README_DE.md
+│
+├── .github/
+│   └── workflows/
+│       └── deploy.yml           <- GitHub Actions CI/CD to AWS EC2
 │
 ├── data/
 │   ├── raw/mimic_demo/          <- MIMIC-IV hospital lab data (PhysioNet)
