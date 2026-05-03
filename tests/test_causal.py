@@ -7,11 +7,12 @@ from src.causal.engine import prepare_causal_data, get_causal_graph_for_plot
 
 
 def test_prepare_causal_data():
-    """Causal data preparation must add qc_fail column."""
+    """Causal data preparation must keep z_score (continuous outcome) and a numeric lot id."""
     df = load_qc_data()
     causal_df = prepare_causal_data(df.head(100))
-    assert "qc_fail" in causal_df.columns
-    assert causal_df["qc_fail"].isin([0, 1]).all()
+    assert "z_score" in causal_df.columns
+    assert "reagent_lot_id" in causal_df.columns
+    assert pd.api.types.is_numeric_dtype(causal_df["reagent_lot_id"])
 
 
 def test_causal_graph_has_nodes():
@@ -21,7 +22,9 @@ def test_causal_graph_has_nodes():
     assert len(G.edges()) > 0
 
 
-def test_causal_graph_has_qc_fail_node():
-    """qc_fail must be in the causal graph as the outcome node."""
+def test_causal_graph_has_outcome_node():
+    """z_score is the outcome node — every edge must terminate there."""
     G = get_causal_graph_for_plot()
-    assert "qc_fail" in G.nodes()
+    assert "z_score" in G.nodes()
+    for _, target in G.edges():
+        assert target == "z_score"

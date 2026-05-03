@@ -5,12 +5,44 @@
 
 {% block content %}
 
+<div class="page-intro">
+  <h1 class="page-title">QC Overview</h1>
+  <p class="page-subtitle">
+    Live quality-control status across all instruments, tests and reagent lots.
+    Charts are interactive — hover for detail, use the camera icon to download a PNG, or export the table as CSV.
+  </p>
+</div>
+
 <!-- KPI row (skeleton until JS loads) -->
 <div class="kpi-grid" id="kpi-row">
   <div class="kpi-card skeleton"><div class="shimmer"></div></div>
   <div class="kpi-card skeleton"><div class="shimmer"></div></div>
   <div class="kpi-card skeleton"><div class="shimmer"></div></div>
   <div class="kpi-card skeleton"><div class="shimmer"></div></div>
+</div>
+
+<!-- ── Z-score trend over time ── -->
+<div class="card" style="margin-bottom:24px;">
+  <div class="card-header">
+    <h3 class="card-title">Z-Score Trend (180 days)</h3>
+    <div class="toolbar">
+      <select class="select" id="trend-instr" title="Filter by instrument">
+        <option value="">All instruments</option>
+      </select>
+      <select class="select" id="trend-test" title="Filter by test">
+        <option value="">All tests</option>
+      </select>
+      <select class="select" id="trend-level" title="Filter by QC level">
+        <option value="">All QC levels</option>
+      </select>
+      <a class="btn-secondary" id="trend-csv" href="#" title="Download filtered trend as CSV">⬇ CSV</a>
+    </div>
+  </div>
+  <p class="card-sub">
+    Each point is one QC observation. Dashed lines mark the Westgard control limits — ±2σ (warning) and ±3σ (rejection).
+    Red points are 1-3s rejects; orange are 1-2s warnings; green are in-control.
+  </p>
+  <div id="chart-trend" style="min-height:420px;"></div>
 </div>
 
 <!-- Charts row: fixed donut + flexible bar -->
@@ -34,9 +66,12 @@
 <div class="card" style="margin-bottom:20px;">
   <div class="card-header">
     <h3 class="card-title">QC Status Table</h3>
-    <div class="table-search-wrap">
-      <input class="table-search" type="text" id="qc-search"
-             placeholder="Filter by instrument, test, status…" />
+    <div class="toolbar">
+      <div class="table-search-wrap">
+        <input class="table-search" type="text" id="qc-search"
+               placeholder="Filter by instrument, test, status…" />
+      </div>
+      <a class="btn-secondary" href="/api/export.csv?view=qc" title="Download QC status as CSV">⬇ CSV</a>
     </div>
   </div>
   <div style="overflow-x:auto;">
@@ -63,7 +98,6 @@
   </div>
 </div>
 
-<!-- MIMIC disclaimer -->
 <div class="info-box" style="margin-top:0;border-left:3px solid var(--text-muted);">
   <strong>Data note:</strong>
   QC records are synthetically generated. Value distributions are calibrated against real
@@ -78,12 +112,14 @@
 const statusOrder = { FAIL: 0, WARNING: 1, PASS: 2 };
 
 async function loadOverview() {
-  const [sRes, qRes] = await Promise.all([
+  const [sRes, qRes, tOptRes] = await Promise.all([
     fetch("/summary"),
     fetch("/qc/status"),
+    fetch("/api/trend/options"),
   ]);
   const summary = await sRes.json();
   const qc      = await qRes.json();
+  const opts    = await tOptRes.json();
 
   // KPI cards
   document.getElementById("kpi-row").innerHTML = `
@@ -105,15 +141,28 @@ async function loadOverview() {
     </div>
   `;
 
-  // Status donut
+  // Trend dropdowns
+  const instrSel = document.getElementById("trend-instr");
+  const testSel  = document.getElementById("trend-test");
+  const levelSel = document.getElementById("trend-level");
+  (opts.instruments || []).forEach(v => instrSel.add(new Option(v, v)));
+  (opts.tests       || []).forEach(v => testSel.add(new Option(v, v)));
+  (opts.qc_levels   || []).forEach(v => levelSel.add(new Option(`Level ${v}`, v)));
+  // Preselect first instrument + test for an immediately readable chart
+  if (opts.instruments && opts.instruments[0]) instrSel.value = opts.instruments[0];
+  if (opts.tests       && opts.tests[0])       testSel.value  = opts.tests[0];
+
+  await loadTrend();
+
+  [instrSel, testSel, levelSel].forEach(el => el.addEventListener("change", loadTrend));
+
+  // Donut + bar
   const countMap = {};
   qc.forEach(r => { countMap[r.status] = (countMap[r.status] || 0) + 1; });
   renderStatusDonut(
     Object.entries(countMap).map(([status, count]) => ({ status, count })),
     "chart-donut"
   );
-
-  // Instrument bar — aggregate counts
   const instrMap = {};
   qc.forEach(r => {
     const key = `${r.instrument_id}|${r.status}`;
@@ -122,11 +171,33 @@ async function loadOverview() {
   });
   renderInstrumentBar(Object.values(instrMap), "chart-bar");
 
-  // Table (sorted FAIL → WARNING → PASS)
+  // Table
   const sorted = [...qc].sort((a, b) =>
     (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3)
   );
   renderQCTable(sorted);
+}
+
+function trendQuery() {
+  const instr = document.getElementById("trend-instr").value;
+  const test  = document.getElementById("trend-test").value;
+  const level = document.getElementById("trend-level").value;
+  const params = new URLSearchParams();
+  if (instr) params.set("instrument", instr);
+  if (test)  params.set("test", test);
+  if (level) params.set("qc_level", level);
+  return params.toString();
+}
+
+async function loadTrend() {
+  const qs   = trendQuery();
+  const res  = await fetch("/api/trend" + (qs ? "?" + qs : ""));
+  const data = await res.json();
+  renderZScoreTrend(data.points || [], "chart-trend");
+
+  // Wire CSV link to current filters
+  const csv = document.getElementById("trend-csv");
+  csv.href = "/api/export.csv?view=trend" + (qs ? "&" + qs : "");
 }
 
 function renderQCTable(rows) {
@@ -152,8 +223,8 @@ function renderQCTable(rows) {
         <td>${r.test_name}</td>
         <td>${r.qc_level}</td>
         <td>${badge}</td>
-        <td style="font-family:var(--font-mono);font-size:12px;">${r.latest_z ?? "—"}</td>
-        <td style="font-family:var(--font-mono);font-size:12px;">${r.mean_z_last_10 ?? "—"}</td>
+        <td class="mono" style="font-size:12px;">${r.latest_z ?? "—"}</td>
+        <td class="mono" style="font-size:12px;">${r.mean_z_last_10 ?? "—"}</td>
         <td>${r.n_rejections}</td>
         <td>${rules}</td>
         <td style="color:var(--text-muted);font-size:12px;">${ts}</td>
@@ -161,7 +232,6 @@ function renderQCTable(rows) {
   }).join("");
 }
 
-// Live search filter
 document.getElementById("qc-search").addEventListener("input", function () {
   const q = this.value.toLowerCase();
   document.querySelectorAll("#qc-tbody tr").forEach(tr => {

@@ -2,28 +2,37 @@
 # Other systems (LIMS, dashboards, other tools) can talk to ARIA through this API.
 # This file also serves the HTML dashboard using Jinja2 templates.
 
+import io
+import logging
+import os
+from typing import Optional
+
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
-from typing import Optional
-import pandas as pd
-import os
+from pydantic import BaseModel, Field
 
-from src.ingestion.loader import load_qc_data, get_summary
-from src.qc.rules import evaluate_qc_dataframe
 from src.causal.engine import run_causal_analysis
-from src.explainer.explainer import explain_failure, counterfactual_analysis
-from src.storage.db import init_db, save_result, get_recent
+from src.explainer.explainer import counterfactual_analysis, explain_failure
+from src.ingestion.loader import get_summary, load_qc_data
+from src.qc.rules import evaluate_qc_dataframe
+from src.storage.db import get_recent, init_db, save_result
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("aria.api")
 
 app = FastAPI(
     title="ARIA API",
     description="Automated Root-cause Intelligence for Analytical Laboratories",
-    version="1.0.0",
+    version="1.1.0",
 )
 
-# Allow all origins for local development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,18 +40,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files (CSS, JS) from dashboard/static
 _static_path = os.path.join(os.path.dirname(__file__), "..", "..", "dashboard", "static")
 app.mount("/static", StaticFiles(directory=_static_path), name="static")
 
-# Load HTML templates from dashboard/templates
 _templates_path = os.path.join(os.path.dirname(__file__), "..", "..", "dashboard", "templates")
 templates = Jinja2Templates(directory=_templates_path)
 
-# Set up the database when the app starts
 init_db()
 
-# Load data once at startup
 _df: Optional[pd.DataFrame] = None
 _causal_result: Optional[dict] = None
 
@@ -62,36 +67,36 @@ def get_causal() -> dict:
     return _causal_result
 
 
-# --- Each route below serves one HTML page of the dashboard ---
+# ── HTML pages ──────────────────────────────────────────────────────────────
 
 @app.get("/")
 def page_overview(request: Request):
-    """Serve the QC Overview page."""
     return templates.TemplateResponse("overview.html", {"request": request, "page": "overview"})
 
 
 @app.get("/causal")
 def page_causal(request: Request):
-    """Serve the Causal Analysis page."""
     return templates.TemplateResponse("causal.html", {"request": request, "page": "causal"})
 
 
 @app.get("/explainer")
 def page_explainer(request: Request):
-    """Serve the Root Cause Explainer page."""
     return templates.TemplateResponse("explainer.html", {"request": request, "page": "explainer"})
 
 
 @app.get("/alerts")
 def page_alerts(request: Request):
-    """Serve the Active Alerts page."""
     return templates.TemplateResponse("alerts.html", {"request": request, "page": "alerts"})
 
 
 @app.get("/architecture")
 def page_architecture(request: Request):
-    """Serve the System Architecture page."""
     return templates.TemplateResponse("architecture.html", {"request": request, "page": "architecture"})
+
+
+@app.get("/mcp")
+def page_mcp(request: Request):
+    return templates.TemplateResponse("mcp.html", {"request": request, "page": "mcp"})
 
 
 @app.get("/health")
@@ -99,32 +104,60 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/failures")
-def api_failures_list(limit: int = 51):
-    """Return the first N failed QC records with their original row indices.
-    Used by the Explainer page so JavaScript can populate the slider."""
-    df = get_data()
-    # Find rows where the z-score shows a failure
-    mask = df["z_score"].abs() > 2.0
-    failures = df[mask].copy()
-    failures["original_index"] = failures.index
-    failures = failures.head(limit)
-    cols = ["original_index", "test_name", "qc_level", "instrument_id",
-            "reagent_lot", "z_score", "lab_temp_c", "hours_since_cal", "humidity_pct",
-            "measured_value", "unit"]
-    return failures[cols].round(4).to_dict(orient="records")
-
+# ── Data endpoints ──────────────────────────────────────────────────────────
 
 @app.get("/summary")
 def summary():
-    """Return dataset summary statistics."""
+    return get_summary(get_data())
+
+
+@app.get("/api/failures")
+def api_failures_list(
+    limit:    int   = 200,
+    severity: str   = "all",   # "warn" → |z|>2, "fail" → |z|>3, "all" → both
+):
+    """
+    List of out-of-control QC observations for the explainer slider.
+
+    Westgard 1-2s (|z|>2) is a *warning*; 1-3s (|z|>3) is a *rejection*.
+    `severity=all` returns both — the explainer treats every entry as
+    "investigate"-worthy. `severity=fail` restricts to rejections only.
+    """
     df = get_data()
-    return get_summary(df)
+    z_abs = df["z_score"].abs()
+    if severity == "fail":
+        mask = z_abs > 3.0
+    elif severity == "warn":
+        mask = (z_abs > 2.0) & (z_abs <= 3.0)
+    else:
+        mask = z_abs > 2.0
+
+    rows = df[mask].copy()
+    total = int(len(rows))
+    rows["original_index"] = rows.index
+    rows["severity"] = z_abs[mask].apply(lambda v: "fail" if v > 3.0 else "warn")
+    rows = rows.head(limit)
+
+    cols = [
+        "original_index", "severity", "test_name", "qc_level", "instrument_id",
+        "reagent_lot", "z_score", "lab_temp_c", "hours_since_cal", "humidity_pct",
+        "measured_value", "unit",
+    ]
+    payload = rows[cols].copy()
+    # Keep numeric rounding only for actual numeric columns.
+    num_cols = payload.select_dtypes(include="number").columns
+    payload[num_cols] = payload[num_cols].round(4)
+
+    return {
+        "total":   total,
+        "limit":   limit,
+        "shown":   int(len(payload)),
+        "records": payload.to_dict(orient="records"),
+    }
 
 
 @app.get("/qc/status")
 def qc_status(instrument: Optional[str] = None, test: Optional[str] = None):
-    """Return current QC status for all or filtered instrument/test combinations."""
     df = get_data()
     if instrument:
         df = df[df["instrument_id"] == instrument]
@@ -132,7 +165,6 @@ def qc_status(instrument: Optional[str] = None, test: Optional[str] = None):
         df = df[df["test_name"] == test]
     result = evaluate_qc_dataframe(df)
 
-    # Save each result row to the database for history tracking
     for _, row in result.iterrows():
         save_result({
             "instrument_id": row["instrument_id"],
@@ -146,30 +178,140 @@ def qc_status(instrument: Optional[str] = None, test: Optional[str] = None):
     return result.to_dict(orient="records")
 
 
-@app.get("/db/recent")
-def db_recent(limit: int = 100):
-    """Return the last N QC results stored in the database."""
-    return get_recent(limit=limit)
-
-
 @app.get("/qc/failures")
 def qc_failures():
-    """Return all current QC failures (FAIL status only)."""
     df = get_data()
     result = evaluate_qc_dataframe(df)
     failures = result[result["status"] == "FAIL"]
     return failures.to_dict(orient="records")
 
 
+@app.get("/db/recent")
+def db_recent(limit: int = 100):
+    return get_recent(limit=limit)
+
+
+# ── Trend (z-score time series) ─────────────────────────────────────────────
+
+@app.get("/api/trend/options")
+def trend_options():
+    """Available instruments + tests for the trend chart dropdowns."""
+    df = get_data()
+    return {
+        "instruments": sorted(df["instrument_id"].dropna().unique().tolist()),
+        "tests":       sorted(df["test_name"].dropna().unique().tolist()),
+        "qc_levels":   sorted(df["qc_level"].dropna().unique().tolist()),
+    }
+
+
+@app.get("/api/trend")
+def api_trend(
+    instrument: Optional[str] = None,
+    test:       Optional[str] = None,
+    qc_level:   Optional[str] = None,
+    days:       int = 180,
+    limit:      int = 1500,
+):
+    """Time-series of z-scores for the trend chart on the Overview page.
+    Returns one record per QC observation: timestamp, z_score, status, instrument, test, qc_level."""
+    df = get_data()
+    if instrument:
+        df = df[df["instrument_id"] == instrument]
+    if test:
+        df = df[df["test_name"] == test]
+    if qc_level:
+        df = df[df["qc_level"] == qc_level]
+
+    if "timestamp" in df.columns and len(df):
+        cutoff = df["timestamp"].max() - pd.Timedelta(days=days)
+        df = df[df["timestamp"] >= cutoff]
+
+    df = df.sort_values("timestamp")
+    if len(df) > limit:
+        # downsample evenly to keep payload small but visually faithful
+        step = max(1, len(df) // limit)
+        df = df.iloc[::step]
+
+    def status_of(z: float) -> str:
+        a = abs(z)
+        if a >= 3.0:
+            return "FAIL"
+        if a >= 2.0:
+            return "WARNING"
+        return "PASS"
+
+    rows = []
+    for _, r in df.iterrows():
+        z = float(r["z_score"])
+        rows.append({
+            "timestamp":     r["timestamp"].isoformat() if hasattr(r["timestamp"], "isoformat") else str(r["timestamp"]),
+            "z_score":       round(z, 4),
+            "status":        status_of(z),
+            "instrument_id": r.get("instrument_id"),
+            "test_name":     r.get("test_name"),
+            "qc_level":      r.get("qc_level"),
+        })
+    return {"count": len(rows), "points": rows}
+
+
+# ── CSV export ──────────────────────────────────────────────────────────────
+
+def _stream_csv(df: pd.DataFrame, filename: str) -> StreamingResponse:
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/export.csv")
+def api_export_csv(
+    view:       str = "qc",
+    instrument: Optional[str] = None,
+    test:       Optional[str] = None,
+    qc_level:   Optional[str] = None,
+):
+    """Download the current dashboard view as CSV.
+    view = 'qc' | 'failures' | 'trend' | 'raw'."""
+    df = get_data()
+    if instrument:
+        df = df[df["instrument_id"] == instrument]
+    if test:
+        df = df[df["test_name"] == test]
+    if qc_level:
+        df = df[df["qc_level"] == qc_level]
+
+    if view == "qc":
+        out = evaluate_qc_dataframe(df)
+        return _stream_csv(out, "aria_qc_status.csv")
+    if view == "failures":
+        out = evaluate_qc_dataframe(df)
+        out = out[out["status"] == "FAIL"]
+        return _stream_csv(out, "aria_qc_failures.csv")
+    if view == "trend":
+        cols = [c for c in [
+            "timestamp", "instrument_id", "test_name", "qc_level",
+            "reagent_lot", "z_score", "lab_temp_c", "hours_since_cal",
+            "humidity_pct", "measured_value", "unit",
+        ] if c in df.columns]
+        return _stream_csv(df[cols].sort_values("timestamp"), "aria_qc_trend.csv")
+    if view == "raw":
+        return _stream_csv(df, "aria_qc_raw.csv")
+    raise HTTPException(status_code=400, detail=f"Unknown view '{view}'. Use qc|failures|trend|raw.")
+
+
+# ── Causal endpoints ────────────────────────────────────────────────────────
+
 @app.get("/causal/analysis")
 def causal_analysis():
-    """Return causal analysis: which variable most affects QC failure."""
     return get_causal()
 
 
 @app.get("/causal/explain/{row_index}")
 def explain(row_index: int):
-    """Explain why a specific QC record failed."""
     df = get_data()
     if row_index >= len(df):
         raise HTTPException(status_code=404, detail="Row not found")
@@ -182,14 +324,13 @@ def explain(row_index: int):
 
 
 class CounterfactualRequest(BaseModel):
-    row_index:    int
-    lab_temp_c:   Optional[float] = None
-    hours_since_cal: Optional[float] = None
+    row_index:       int   = Field(ge=0, description="Row index in the loaded QC dataset")
+    lab_temp_c:      Optional[float] = Field(default=None, ge=10, le=40, description="Counterfactual lab temperature (°C)")
+    hours_since_cal: Optional[float] = Field(default=None, ge=0, le=72, description="Counterfactual hours since calibration")
 
 
 @app.post("/causal/counterfactual")
 def counterfactual(req: CounterfactualRequest):
-    """Simulate: if we had changed these conditions, would QC have passed?"""
     df = get_data()
     if req.row_index >= len(df):
         raise HTTPException(status_code=404, detail="Row not found")
@@ -205,9 +346,7 @@ def counterfactual(req: CounterfactualRequest):
 
 @app.get("/causal/simulate/{row_index}")
 def simulate(row_index: int, new_temp: Optional[float] = None, new_hours: Optional[float] = None):
-    """GET endpoint for counterfactual simulation (curl-friendly).
-    Example: /causal/simulate/1?new_temp=19&new_hours=1
-    """
+    """Curl-friendly counterfactual GET endpoint."""
     df = get_data()
     if row_index >= len(df):
         raise HTTPException(status_code=404, detail="Row not found")

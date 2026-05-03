@@ -19,7 +19,21 @@ const BASE = {
   showlegend: false,
 };
 
-const CFG = { displayModeBar: false, responsive: true, autosize: true };
+// PNG export is enabled via the Plotly modebar (camera icon → download).
+const CFG = {
+  displayModeBar: "hover",
+  displaylogo: false,
+  responsive: true,
+  autosize: true,
+  modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"],
+  toImageButtonOptions: {
+    format: "png",
+    filename: "aria-chart",
+    scale: 2,
+    width: 1400,
+    height: 800,
+  },
+};
 
 // ── Overview ──────────────────────────────────────────────────────────────
 
@@ -154,7 +168,7 @@ function renderATEChart(ates, elementId) {
       zerolinecolor: "rgba(255,255,255,0.3)",
       zerolinewidth: 2,
       range: [-maxAbsVal * 0.3, maxAbsVal * 1.9],
-      title: { text: "Average Treatment Effect on Z-Score", font: { size: 13, color: "#64748b" } },
+      title: { text: "ATE on QC z-score (σ per unit of treatment)", font: { size: 13, color: "#64748b" } },
     },
     yaxis: {
       tickfont: { size: 13, color: C.text },
@@ -165,31 +179,26 @@ function renderATEChart(ates, elementId) {
 }
 
 function renderCausalGraph(elementId) {
-  // Fixed 3-tier layout: Tier1=outcome, Tier2=mediators, Tier3=root causes
+  // 2-tier layout: outcome (z_score) on top, four upstream causes below.
+  // Edges are direct — DoWhy estimates each ATE via the backdoor criterion.
   const nodes = [
-    { id: "qc_fail",          label: "QC Z-Score",       x: 0.50, y: 1.0, tier: 1, hover: "Outcome: the QC z-score result" },
-    { id: "lab_temp_c",       label: "Lab Temp (°C)",    x: 0.15, y: 0.5, tier: 2, hover: "Lab temperature — high temp degrades enzymes" },
-    { id: "reagent_activity", label: "Reagent Activity", x: 0.50, y: 0.5, tier: 2, hover: "Chemical activity level of the reagent" },
-    { id: "drift",            label: "Cal. Drift",       x: 0.85, y: 0.5, tier: 2, hover: "Instrument drift since last calibration" },
-    { id: "reagent_lot_id",   label: "Reagent Lot",      x: 0.15, y: 0.0, tier: 3, hover: "Batch ID — some lots are less stable" },
-    { id: "humidity_pct",     label: "Humidity %",       x: 0.50, y: 0.0, tier: 3, hover: "Lab relative humidity affects reagents" },
-    { id: "hours_since_cal",  label: "Hours Since Cal.", x: 0.85, y: 0.0, tier: 3, hover: "Hours since last instrument calibration" },
+    { id: "z_score",         label: "QC Z-Score (σ)",   x: 0.50, y: 1.0, tier: 1, hover: "Outcome: standardized QC z-score (σ units)" },
+    { id: "lab_temp_c",      label: "Lab Temp (°C)",    x: 0.10, y: 0.0, tier: 2, hover: "Lab temperature — high temp degrades enzyme activity" },
+    { id: "humidity_pct",    label: "Humidity (%)",     x: 0.37, y: 0.0, tier: 2, hover: "Relative humidity — affects reagent concentration" },
+    { id: "reagent_lot_id",  label: "Reagent Lot",      x: 0.63, y: 0.0, tier: 2, hover: "Reagent lot id — some lots run lower than reference" },
+    { id: "hours_since_cal", label: "Hours Since Cal.", x: 0.90, y: 0.0, tier: 2, hover: "Hours since last calibration — instruments drift over time" },
   ];
 
   const tierStyle = {
     1: { color: "#ef4444", border: "#fca5a5", size: 34 },
-    2: { color: "#0e7490", border: "#22d3ee", size: 26 },
-    3: { color: "#1e293b", border: "#64748b", size: 20 },
+    2: { color: "#1e293b", border: "#64748b", size: 22 },
   };
 
   const edges = [
-    { from: "reagent_lot_id",   to: "reagent_activity", toOutcome: false },
-    { from: "humidity_pct",     to: "reagent_activity", toOutcome: false },
-    { from: "lab_temp_c",       to: "reagent_activity", toOutcome: false },
-    { from: "hours_since_cal",  to: "drift",            toOutcome: false },
-    { from: "lab_temp_c",       to: "qc_fail",          toOutcome: true  },
-    { from: "reagent_activity", to: "qc_fail",          toOutcome: true  },
-    { from: "drift",            to: "qc_fail",          toOutcome: true  },
+    { from: "lab_temp_c",      to: "z_score", toOutcome: true },
+    { from: "humidity_pct",    to: "z_score", toOutcome: true },
+    { from: "reagent_lot_id",  to: "z_score", toOutcome: true },
+    { from: "hours_since_cal", to: "z_score", toOutcome: true },
   ];
 
   const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
@@ -205,21 +214,19 @@ function renderCausalGraph(elementId) {
       showarrow:  true,
       arrowhead:  2,
       arrowsize:  1.8,
-      arrowwidth: edge.toOutcome ? 3 : 2,
-      arrowcolor: edge.toOutcome ? "#f87171" : "#38bdf8",
+      arrowwidth: 2.5,
+      arrowcolor: "#f87171",
       standoff:   20,
     };
   });
 
   // Node labels as annotations (away from arrowheads)
   const labelShifts = {
-    "qc_fail":          { xshift:   0, yshift:  20 },
-    "lab_temp_c":       { xshift: -15, yshift: -20 },
-    "reagent_activity": { xshift:   0, yshift: -20 },
-    "drift":            { xshift:  15, yshift: -20 },
-    "reagent_lot_id":   { xshift: -15, yshift: -20 },
-    "humidity_pct":     { xshift:   0, yshift: -20 },
-    "hours_since_cal":  { xshift:  15, yshift: -20 },
+    "z_score":         { xshift:   0, yshift:  22 },
+    "lab_temp_c":      { xshift:   0, yshift: -22 },
+    "humidity_pct":    { xshift:   0, yshift: -22 },
+    "reagent_lot_id":  { xshift:   0, yshift: -22 },
+    "hours_since_cal": { xshift:   0, yshift: -22 },
   };
 
   const labelAnnotations = nodes.map(n => ({
@@ -237,7 +244,7 @@ function renderCausalGraph(elementId) {
   const legendAnnotation = {
     x: 0.5, y: -0.12,
     xref: "paper", yref: "paper",
-    text: '<span style="color:#ef4444">●</span> Outcome  <span style="color:#0e7490">●</span> Mediator  <span style="color:#64748b">●</span> Root Cause',
+    text: '<span style="color:#ef4444">●</span> Outcome (z-score, σ)  <span style="color:#64748b">●</span> Upstream cause',
     showarrow: false,
     font: { size: 11, color: "#64748b" },
     xanchor: "center",
@@ -330,7 +337,7 @@ function renderDataFlowDiagram(elementId) {
 
   const nodes = [
     { id: "mimic",   label: "MIMIC-IV\nPhysioNet",      sub: "Real hospital\nlab reference data",       path: "data/raw/mimic_demo/",       x: 0.10, y: 0.82, layer: 0 },
-    { id: "gen",     label: "Synthetic\nGenerator",     sub: "116,640 QC records\n180 days × 3 instr.", path: "data/synthetic/generate.py", x: 0.10, y: 0.42, layer: 0 },
+    { id: "gen",     label: "Synthetic\nGenerator",     sub: "38,880 QC records\n180 days × 3 instr.",  path: "data/synthetic/generate.py", x: 0.10, y: 0.42, layer: 0 },
     { id: "loader",  label: "Data\nLoader",             sub: "CSV → DataFrame\ntype coercion + sort",   path: "src/ingestion/loader.py",    x: 0.36, y: 0.62, layer: 1 },
     { id: "rules",   label: "Westgard\nEngine",         sub: "6 rules · 30-day\ntiered windows",        path: "src/qc/rules.py",            x: 0.62, y: 0.82, layer: 2 },
     { id: "causal",  label: "Causal\nEngine",           sub: "DoWhy · ATE\nBackdoor linear reg",        path: "src/causal/engine.py",       x: 0.62, y: 0.42, layer: 2 },
@@ -416,6 +423,141 @@ function renderDataFlowDiagram(elementId) {
     annotations: [...arrowAnnotations, ...headerAnnotations, ...labelAnnotations],
   }, CFG);
 }
+
+// ── Trend (z-score time series) ─────────────────────────────────────────────
+
+function renderZScoreTrend(points, elementId) {
+  // points: [{ timestamp, z_score, status, instrument_id, test_name, qc_level }]
+  if (!points || !points.length) {
+    Plotly.newPlot(elementId, [], {
+      ...BASE,
+      height: 380,
+      margin: { t: 30, b: 50, l: 60, r: 30 },
+      xaxis: { color: C.muted },
+      yaxis: { color: C.muted, range: [-4, 4] },
+      annotations: [{
+        text: "No data for the current filters",
+        x: 0.5, y: 0.5, xref: "paper", yref: "paper",
+        showarrow: false, font: { size: 14, color: C.muted },
+      }],
+    }, CFG);
+    return;
+  }
+
+  const x = points.map(p => p.timestamp);
+  const y = points.map(p => p.z_score);
+  const colors = points.map(p =>
+    p.status === "FAIL" ? C.fail : p.status === "WARNING" ? C.warn : C.pass
+  );
+  const text = points.map(p =>
+    `<b>${p.test_name || ""}</b> · ${p.instrument_id || ""} · L${p.qc_level || ""}<br>${p.status} · z = ${p.z_score.toFixed(3)}`
+  );
+
+  const lineTrace = {
+    type: "scatter",
+    mode: "lines",
+    x, y,
+    line: { color: "rgba(79,152,163,0.45)", width: 1.5 },
+    hoverinfo: "skip",
+    showlegend: false,
+  };
+
+  const pointTrace = {
+    type: "scatter",
+    mode: "markers",
+    x, y,
+    marker: {
+      color: colors,
+      size: 7,
+      line: { color: "#0a0b0f", width: 1 },
+    },
+    text,
+    hovertemplate: "%{text}<br>%{x|%Y-%m-%d %H:%M}<extra></extra>",
+    showlegend: false,
+  };
+
+  // Westgard ±2σ warning + ±3σ rejection control limits.
+  const xRange = [x[0], x[x.length - 1]];
+  const limit = (z, color, dash, label) => ({
+    type: "scatter",
+    mode: "lines",
+    x: xRange,
+    y: [z, z],
+    line: { color, width: 1.5, dash },
+    hoverinfo: "skip",
+    showlegend: true,
+    name: label,
+  });
+
+  Plotly.newPlot(elementId, [
+    limit( 3, "rgba(239,68,68,0.55)",  "dash",  "+3σ (1-3s reject)"),
+    limit( 2, "rgba(245,158,11,0.55)", "dot",   "+2σ (1-2s warn)"),
+    limit(-2, "rgba(245,158,11,0.55)", "dot",   "-2σ (1-2s warn)"),
+    limit(-3, "rgba(239,68,68,0.55)",  "dash",  "-3σ (1-3s reject)"),
+    lineTrace,
+    pointTrace,
+  ], {
+    ...BASE,
+    height: 420,
+    showlegend: true,
+    legend: {
+      orientation: "h",
+      x: 0.5, xanchor: "center",
+      y: -0.18,
+      font: { color: C.muted, size: 12 },
+      itemgap: 16,
+    },
+    margin: { t: 30, b: 80, l: 60, r: 30 },
+    xaxis: {
+      color: C.muted,
+      tickfont: { size: 12, color: C.muted },
+      gridcolor: "rgba(255,255,255,0.05)",
+      title: { text: "Date", font: { size: 12, color: "#64748b" } },
+    },
+    yaxis: {
+      color: C.muted,
+      tickfont: { size: 12, color: C.muted },
+      gridcolor: "rgba(255,255,255,0.07)",
+      zerolinecolor: "rgba(255,255,255,0.25)",
+      range: [-4.2, 4.2],
+      title: { text: "Z-Score (σ)", font: { size: 12, color: "#64748b" } },
+    },
+  }, CFG);
+}
+
+// Compact gauge used by the counterfactual hero (smaller than renderZGauge)
+function renderHeroGauge(zScore, elementId, label) {
+  const absZ = Math.abs(zScore);
+  const color = absZ > 3 ? C.fail : absZ > 2 ? C.warn : C.pass;
+  Plotly.newPlot(elementId, [{
+    type: "indicator",
+    mode: "gauge+number",
+    value: Math.round(zScore * 100) / 100,
+    title: label ? { text: label, font: { size: 13, color: C.muted } } : undefined,
+    number: {
+      font: { size: 36, color, family: "JetBrains Mono, monospace" },
+      suffix: " σ",
+    },
+    gauge: {
+      shape: "angular",
+      axis: { range: [-4, 4], tickcolor: C.muted, tickfont: { color: C.muted, size: 11 } },
+      bar: { color, thickness: 0.22 },
+      bgcolor: "rgba(255,255,255,0.02)",
+      borderwidth: 0,
+      steps: [
+        { range: [-4, -2], color: "rgba(224,92,106,0.14)" },
+        { range: [-2,  2], color: "rgba(93,168,74,0.10)" },
+        { range: [ 2,  4], color: "rgba(224,92,106,0.14)" },
+      ],
+    },
+  }], {
+    ...BASE,
+    height: 240,
+    margin: { t: 40, b: 10, l: 30, r: 30 },
+  }, CFG);
+}
+
+// ── Tool stack (Architecture page) ───────────────────────────────────────────
 
 function renderToolStackChart(elementId) {
   const categories = ["Data Layer", "Intelligence Layer", "Interface Layer"];

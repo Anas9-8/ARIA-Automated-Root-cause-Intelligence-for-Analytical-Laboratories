@@ -60,7 +60,7 @@ def get_lot_info(lot_name: str) -> dict:
     """
     Classify a reagent lot by its naming suffix.
     Matches the bias coefficients in data/synthetic/generate.py:
-      -03 lots → −2% mean bias (strong_negative)
+      -03 lots → −2.0% mean bias (strong_negative)
       -02 lots → −0.8% mean bias (known_negative)
       -01 lots → no bias (reference)
     """
@@ -73,19 +73,19 @@ def get_lot_info(lot_name: str) -> dict:
         }
     if name.endswith("-03"):
         return {
-            "label": f"Reagent Lot {name} — strong negative bias (−8%)",
+            "label": f"Reagent Lot {name} — strong negative bias (−2.0%)",
             "bias":  "strong_negative",
             "suggestion": (
-                f"Lot {name} has documented strong negative bias (−8% from reference). "
+                f"Lot {name} has documented strong negative bias (−2.0% from reference). "
                 f"Stop using this lot immediately. Switch to a -01 reference lot and repeat QC."
             ),
         }
     if name.endswith("-02"):
         return {
-            "label": f"Reagent Lot {name} — known negative bias (−3%)",
+            "label": f"Reagent Lot {name} — known negative bias (−0.8%)",
             "bias":  "known_negative",
             "suggestion": (
-                f"Lot {name} has a documented negative bias (−3% from reference). "
+                f"Lot {name} has a documented negative bias (−0.8% from reference). "
                 f"Switch to a lot ending in -01, or run lot-specific verification before reporting patient results."
             ),
         }
@@ -229,17 +229,25 @@ def counterfactual_analysis(
 ) -> Dict:
     """
     Simulate: if we change these variables, would QC pass?
-    Uses actual ATE coefficients from the causal engine (linear approximation).
-    delta = new_value - original_value; effect = delta * ATE; simulated_z += effect
-    Cooling temp (negative delta) with positive ATE → negative effect → lower Z. ✓
+    Linear-approximation counterfactual built on top of the causal engine.
+
+    The causal engine's outcome is the continuous z-score (in σ units), so each ATE
+    is "σ change in z-score per unit change in the treatment". The counterfactual
+    therefore lives in the same units as the original observation:
+
+        simulated_z = original_z + Σ (new_value − original_value) * ATE_var
+
+    Falls back to a small, conservative ATE map only if the engine has not
+    produced one yet (typically during cold-start before /causal/analysis is hit).
+    Those fallbacks match the synthetic generator's true coefficients in σ-units.
     """
     original_z = record.get("z_score", 0)
     simulated_z = original_z
     changes = []
 
     ate_map = causal_ates or {
-        "lab_temp_c": 0.0122,
-        "hours_since_cal": 0.003,
+        "lab_temp_c":      0.012,   # matches generator's temperature_effect coefficient
+        "hours_since_cal": 0.003,   # matches generator's calibration_drift slope
     }
 
     for variable, new_value in counterfactual_values.items():

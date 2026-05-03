@@ -8,10 +8,11 @@ client = TestClient(app)
 
 
 def test_root():
-    """Root endpoint must return system info."""
+    """Root endpoint serves the QC Overview HTML page."""
     resp = client.get("/")
     assert resp.status_code == 200
-    assert resp.json()["system"] == "ARIA"
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert b"ARIA" in resp.content
 
 
 def test_health():

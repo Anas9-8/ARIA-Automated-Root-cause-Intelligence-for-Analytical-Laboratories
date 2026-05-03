@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}AI Integration (MCP){% endblock %}
+{% block topbar_title %}AI Integration · Model Context Protocol{% endblock %}
+
+{% block content %}
+
+<div class="page-intro">
+  <h1 class="page-title">AI Integration via MCP</h1>
+  <p class="page-subtitle">
+    ARIA exposes its causal analysis as <strong>tools</strong> to any AI assistant that speaks
+    Anthropic's <a href="https://modelcontextprotocol.io" target="_blank" rel="noopener">Model Context Protocol</a> —
+    Claude Desktop, Cursor, Cline, or any custom MCP client.
+  </p>
+</div>
+
+<!-- ── What it is + KPIs ── -->
+<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
+  <div class="kpi-card">
+    <div class="kpi-label">Server</div>
+    <div class="kpi-value" style="font-size:22px;">aria-lab-server</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Resources</div>
+    <div class="kpi-value">3</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Tools</div>
+    <div class="kpi-value">3</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Transport</div>
+    <div class="kpi-value" style="font-size:22px;">stdio</div>
+  </div>
+</div>
+
+<!-- ── What ARIA exposes ── -->
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Resources (read-only data)</h3>
+      <span class="topbar-badge">3</span>
+    </div>
+    <div class="mcp-item">
+      <div class="mcp-name">lab://qc-status</div>
+      <div class="mcp-desc">Current Westgard status for every instrument-test-level combination.</div>
+    </div>
+    <div class="mcp-item">
+      <div class="mcp-name">lab://causal-model</div>
+      <div class="mcp-desc">DoWhy ATE results: each upstream variable's σ-effect on the QC z-score.</div>
+    </div>
+    <div class="mcp-item">
+      <div class="mcp-name">lab://summary</div>
+      <div class="mcp-desc">Dataset summary — record count, instruments, tests, reagent lots, date range.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Tools (callable actions)</h3>
+      <span class="topbar-badge">3</span>
+    </div>
+    <div class="mcp-item">
+      <div class="mcp-name">get_qc_failures</div>
+      <div class="mcp-desc">Returns active QC failures with the Westgard rule that triggered each one.</div>
+    </div>
+    <div class="mcp-item">
+      <div class="mcp-name">get_root_cause</div>
+      <div class="mcp-desc">Returns the top causal factor and the full ATE table from DoWhy.</div>
+    </div>
+    <div class="mcp-item">
+      <div class="mcp-name">get_instrument_status</div>
+      <div class="mcp-desc">Per-instrument Westgard summary. Argument: <code>instrument_id</code> (e.g. <code>COBAS-C311-01</code>).</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Wire up to Claude Desktop ── -->
+<div class="card" style="margin-top:24px;">
+  <div class="card-header">
+    <h3 class="card-title">Wire into Claude Desktop in 30 seconds</h3>
+    <button class="btn-secondary" id="copy-config-btn">📋 Copy</button>
+  </div>
+  <p style="color:var(--text-muted);font-size:14px;margin:0 0 12px;">
+    Add this block to <code>claude_desktop_config.json</code>
+    (<span class="mono">~/Library/Application Support/Claude/</span> on macOS,
+    <span class="mono">%APPDATA%\Claude\</span> on Windows). Replace the path with your local clone.
+  </p>
+  <pre class="code-block" id="mcp-config">{
+  "mcpServers": {
+    "aria": {
+      "command": "python",
+      "args": ["-m", "src.mcp.server"],
+      "cwd": "/absolute/path/to/ARIA"
+    }
+  }
+}</pre>
+  <div class="info-box" style="margin-top:16px;">
+    <strong>What this unlocks:</strong> ask Claude things like
+    <em>"Which lab QC failures are active right now?"</em> or
+    <em>"Why did the Glucose run on INST-A fail?"</em> — Claude calls ARIA's tools and reads back
+    the causal answer. No LIMS plug-in required.
+  </div>
+</div>
+
+<!-- ── Example transcript ── -->
+<div class="card" style="margin-top:24px;">
+  <div class="card-header">
+    <h3 class="card-title">Example Transcript</h3>
+    <span class="topbar-badge">Live MCP call</span>
+  </div>
+  <div class="chat-thread">
+    <div class="chat-msg chat-user">
+      <div class="chat-role">YOU</div>
+      <div class="chat-body">Why did the most recent Glucose QC fail on INST-A?</div>
+    </div>
+    <div class="chat-msg chat-tool">
+      <div class="chat-role">CLAUDE → MCP TOOL</div>
+      <div class="chat-body mono">get_instrument_status({ instrument_id: "COBAS-C311-01" })</div>
+    </div>
+    <div class="chat-msg chat-assistant">
+      <div class="chat-role">CLAUDE</div>
+      <div class="chat-body">
+        Glucose L2 on COBAS-C311-01 is failing with z = +3.21 σ (Westgard 1-3s).
+        ARIA's causal model attributes most of the deviation to <strong>elevated lab temperature
+        (28.4 °C, ATE ≈ +0.012 σ per °C above 22 °C baseline)</strong>, with a smaller
+        contribution from <strong>reagent lot R-GLU-2024-03</strong>. Counterfactual: dropping
+        the temperature back to 22 °C would have produced a simulated z ≈ +1.04 σ, well
+        inside control limits.
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById("copy-config-btn").addEventListener("click", () => {
+  const text = document.getElementById("mcp-config").textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById("copy-config-btn");
+    const orig = btn.textContent;
+    btn.textContent = "✓ Copied";
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  });
+});
+</script>
+{% endblock %}

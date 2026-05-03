@@ -12,14 +12,14 @@ DB_PATH = os.environ.get("DB_PATH", "data/aria.db")
 
 def init_db(db_path: str = DB_PATH) -> None:
     """
-    This function creates the database table if it does not exist yet.
-    It is safe to call this function every time the app starts.
+    Create the QC result table if missing. Safe to call on every app start.
+    A UNIQUE index on (instrument_id, test_name, qc_level, timestamp) lets
+    save_result() be idempotent — re-saving the same QC outcome is a no-op.
     """
     os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Create the table for QC results
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS qc_results (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,6 +32,19 @@ def init_db(db_path: str = DB_PATH) -> None:
             created_at    TEXT    DEFAULT (datetime('now'))
         )
     """)
+    # Pre-existing databases may already hold duplicate rows from before
+    # save_result() was idempotent. Dedupe before creating the unique index.
+    cursor.execute("""
+        DELETE FROM qc_results
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM qc_results
+            GROUP BY instrument_id, test_name, qc_level, timestamp
+        )
+    """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_qc_results_group_ts
+        ON qc_results (instrument_id, test_name, qc_level, timestamp)
+    """)
 
     conn.commit()
     conn.close()
@@ -39,15 +52,15 @@ def init_db(db_path: str = DB_PATH) -> None:
 
 def save_result(row_dict: Dict, db_path: str = DB_PATH) -> None:
     """
-    This function saves one QC result to the database.
-    Pass a dictionary with keys: instrument_id, test_name, qc_level,
-    z_score, status, timestamp.
+    Save one QC result. Idempotent — repeated saves of the same
+    (instrument, test, level, timestamp) are silently ignored thanks to the
+    unique index above. This makes hitting /qc/status repeatedly safe.
     """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO qc_results
+        INSERT OR IGNORE INTO qc_results
             (instrument_id, test_name, qc_level, z_score, status, timestamp)
         VALUES
             (:instrument_id, :test_name, :qc_level, :z_score, :status, :timestamp)

@@ -6,30 +6,98 @@
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=flat&logo=github-actions)](https://github.com/Anas9-8/ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories/actions)
 [![Docker](https://img.shields.io/badge/Deployed%20with-Docker-2496ED?style=flat&logo=docker)](http://3.78.247.13:8000/health)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.116-009688?style=flat&logo=fastapi)](http://3.78.247.13:8000/docs)
+[![MCP](https://img.shields.io/badge/MCP-server-7c3aed?style=flat)](http://3.78.247.13:8000/mcp)
+
+ARIA reads daily clinical-lab QC runs, applies the six standard Westgard rules,
+and uses a DoWhy causal model to answer **why** a run failed — not just that it did.
+A counterfactual simulator on the dashboard lets you replay any failed run with
+different lab conditions and see whether it would have passed.
 
 ---
 
-## Live Deployment — No Installation Required
-
-The application is running on AWS EC2. Open any link below in a browser right now:
+## Live deployment — no installation required
 
 | | Link |
 |---|---|
-| Dashboard | http://3.78.247.13:8000/causal |
 | QC Overview | http://3.78.247.13:8000/ |
-| Root Cause Explainer | http://3.78.247.13:8000/explainer |
+| Causal Analysis | http://3.78.247.13:8000/causal |
+| Counterfactual / Root Cause | http://3.78.247.13:8000/explainer |
 | Active Alerts | http://3.78.247.13:8000/alerts |
+| AI Integration (MCP) | http://3.78.247.13:8000/mcp |
+| Architecture | http://3.78.247.13:8000/architecture |
 | API Docs (Swagger) | http://3.78.247.13:8000/docs |
 | Health Check | http://3.78.247.13:8000/health |
-| CI/CD Pipeline | https://github.com/Anas9-8/ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories/actions |
 
-No account, no login, no setup. The full causal AI analysis and all interactive charts are live.
+No account, no setup. The full causal AI analysis and every interactive chart are live.
 
 ---
 
-## CI/CD Pipeline
+## The problem
 
-Every `git push` to `main` triggers an automated deployment:
+Every clinical lab runs daily quality-control checks. When a QC run fails, the
+technician knows the result is wrong — but not why. Was it the reagent lot? The
+instrument? Temperature drift? A calibration that ran too long?
+
+In most labs that investigation takes hours and relies on tribal knowledge. ARIA
+answers the question in seconds using **causal inference, not correlation**.
+
+---
+
+## What's in the box
+
+- **Westgard multi-rule QC engine** — six rules (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x)
+  with clinically appropriate tiered time windows so old violations do not
+  inflate today's status.
+- **Causal graph + DoWhy ATE estimator** — the outcome is the continuous QC
+  z-score (σ units), so every coefficient is "σ change in z-score per unit
+  change in this variable". That keeps the counterfactual math in the same
+  units as the chart and the explanation.
+- **Counterfactual simulator (the showcase feature)** — a hero card on the
+  Explainer page with paired before/after gauges. Pick any out-of-control
+  run, dial temperature and calibration sliders, click Run Simulation, and
+  watch the simulated z-score move.
+- **Z-score trend with Westgard control limits** on the Overview page —
+  filterable per instrument / test / QC level, ±2σ and ±3σ guides drawn in.
+- **PNG export** on every chart (Plotly camera button) and **CSV export** on
+  every table (one click per view: status / failures / trend / raw).
+- **Root-cause natural-language explainer** — for each failure: ranked
+  contributing factors, a recommendation, and a reagent-lot bias hint.
+- **MCP server** — same analysis exposed as tools to Claude Desktop / Cursor /
+  any MCP client. Three resources, three tools, stdio transport.
+- **FastAPI REST backend** — every analysis is also reachable over HTTP.
+  Suitable for LIMS integration.
+- **SQLite history** with a UNIQUE index — repeated polls do not duplicate rows.
+- **Docker + GitHub Actions CI/CD** — push to `main` deploys to AWS EC2.
+
+---
+
+## Counterfactual simulator (the showcase)
+
+The Explainer page (`/explainer`) is built around a single hero card so the
+counterfactual is the first thing you see, not buried under a table:
+
+- **Failure selector** — slider over every QC observation with `|z| > 2σ`
+  (warnings *and* rejections; severity is shown per row).
+- **Paired gauges** — Original z-score on the left, Simulated z-score on the
+  right, with an arrow that turns green when the simulation improves the run.
+- **Two sliders** — Lab temperature (°C) and Hours-since-calibration. Both
+  pre-fill to the failed run's actual values so the starting state is honest.
+- **Run Simulation** posts to `/causal/counterfactual`; the simulator applies
+  the engine's ATEs to the deltas and returns the new z-score.
+- **Reset** snaps both sliders back to the original conditions.
+
+Math:
+
+```
+simulated_z = original_z + Σ (new_value − original_value) * ATE_var
+```
+
+Because the engine outcome is the z-score itself, ATEs are in σ units, so this
+is dimensionally consistent.
+
+---
+
+## CI/CD pipeline
 
 ```
 git push origin main
@@ -43,63 +111,117 @@ SSH into AWS EC2 (appleboy/ssh-action)
        +-- git pull origin main
        +-- docker-compose down --remove-orphans
        +-- docker-compose up --build -d
-       +-- health check loop: polls /health every 5s (60s timeout)
+       +-- health-check loop: polls /health every 5s for 60s
        +-- verify /causal and /docs respond
        |
        v
 Live at http://3.78.247.13:8000
 ```
 
-The deployment is fully unattended. Secrets (EC2 host IP and private SSH key) are stored in GitHub Actions and never appear in the repository.
+Secrets (EC2 host, private SSH key) are stored in GitHub Actions and never
+appear in the repository.
 
 ---
 
-## The Problem
+## Causal model
 
-Every laboratory runs daily quality control checks. When a QC run fails, the technician knows the result is wrong, but not why. Was it the reagent lot? The instrument? Temperature drift? A calibration that ran too long?
+Domain-informed DAG with one outcome and four upstream causes:
 
-In most labs, that investigation takes hours and relies on experience. ARIA answers the question in seconds using causal inference, not correlation.
-
----
-
-## Solution Overview
-
-ARIA builds a directed acyclic graph (DAG) over the lab environment variables and uses DoWhy's backdoor estimator to compute average treatment effects on the QC z-score. It then generates a natural language explanation of each failure and lets users run counterfactual simulations: "if the temperature had been 19 degrees instead of 27, would this run have passed?"
-
-The full analysis — from raw QC data to counterfactual answer — is accessible through a web dashboard served by the same FastAPI backend that handles the REST API.
-
----
-
-## Demo
-
-![ARIA Dashboard Demo](docs/demo.gif)
-
-The GIF shows the five dashboard pages: QC Overview with live status charts, Causal Analysis with the ATE bar chart and DAG, Root Cause Explainer with counterfactual simulation, Active Alerts with Westgard severity classification, and the Architecture diagram.
-
-To regenerate after UI changes:
-
-```bash
-bash scripts/generate_demo.sh
+```
+lab_temp_c       -> z_score
+humidity_pct     -> z_score
+reagent_lot_id   -> z_score
+hours_since_cal  -> z_score
 ```
 
----
+DoWhy's backdoor linear regression is run once per cause; each estimate is the
+σ-change in the QC z-score per unit change in that cause. An ATE of `+0.012` on
+`lab_temp_c` means "every °C raises the z-score by 0.012 σ on average".
 
-## Key Features
-
-- **Westgard multi-rule QC engine** — six rules (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x) with tiered time windows. Identifies warning and rejection events independently.
-- **Causal graph with DoWhy** — backdoor linear regression estimates how temperature, calibration age, and reagent lot each causally affect the z-score.
-- **Counterfactual simulation** — adjust lab conditions on any failed run and simulate whether the outcome would change.
-- **Root cause explainer** — natural language output for each failure with a ranked list of contributing factors.
-- **FastAPI REST backend** — all analysis is available via HTTP. Suitable for LIMS integration.
-- **HTML dashboard** — five pages rendered server-side with Jinja2, charts via Plotly.js. No JavaScript framework, no build step.
-- **SQLite result history** — every QC evaluation is persisted for trend tracking.
-- **MCP server** — exposes ARIA's analysis as tools for AI assistants via Anthropic's Model Context Protocol.
-- **Docker deployment** — single `docker-compose up --build -d` deploys the full stack.
-- **GitHub Actions CI/CD** — push to `main` automatically deploys to EC2.
+Counterfactuals reuse those same coefficients, so the simulated z-score and the
+chart label are in the same units.
 
 ---
 
-## Technology Stack
+## QC engine
+
+| Rule | Type | Trigger |
+|------|------|---------|
+| 1-2s | Warning | `|z| > 2.0` (most recent value) |
+| 1-3s | Rejection | `|z| > 3.0` (most recent value) |
+| 2-2s | Rejection | Two consecutive values > 2.0 σ in same direction |
+| R-4s | Rejection | Range between two consecutive values > 4 σ |
+| 4-1s | Rejection | Four consecutive values all > 1.0 σ in same direction |
+| 10x  | Rejection | Ten consecutive values on the same side of the mean |
+
+Tiered time windows per rule type stop stale violations from inflating today's
+status.
+
+---
+
+## Data
+
+The QC time-series is **synthetic by design**. Real Westgard logs are
+confidential. The synthetic generator is calibrated against the public
+**MIMIC-IV Demo** dataset (PhysioNet, 2023) so that value ranges, units, and
+instrument variation are physiologically realistic.
+
+| | |
+|---|---|
+| Records | 38,880 |
+| Days | 180 |
+| Instruments | COBAS-C311-01, COBAS-C311-02, COBAS-C501-03 |
+| Tests | Glucose, Creatinine, Sodium, Potassium, ALT, Hemoglobin, Calcium, Bilirubin |
+| QC levels | L1, L2, L3 |
+| Reagent lots | 19 (`-01` reference, `-02` ≈ −0.8 % bias, `-03` ≈ −2 % bias) |
+| z-score range | clipped to `[−4, +4]` (anything beyond is broken instrument, not drift) |
+
+---
+
+## MCP server
+
+ARIA is also an **MCP server** — every analysis on the dashboard is reachable
+as a tool from Claude Desktop, Cursor, Cline, or any custom MCP client.
+
+Start it locally:
+
+```bash
+make mcp
+```
+
+What it exposes (matches `src/mcp/server.py` exactly):
+
+**Resources**
+- `lab://qc-status` — Westgard status per instrument-test-level.
+- `lab://causal-model` — DoWhy ATE results (σ per unit on the QC z-score).
+- `lab://summary` — record count, instruments, tests, reagent lots, date range.
+
+**Tools**
+- `get_qc_failures()` — active failures + which Westgard rule fired.
+- `get_root_cause()` — top causal factor and full ATE table.
+- `get_instrument_status({ instrument_id })` — per-instrument summary, e.g.
+  `instrument_id = "COBAS-C311-01"`.
+
+Wire into Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "aria": {
+      "command": "python",
+      "args": ["-m", "src.mcp.server"],
+      "cwd": "/absolute/path/to/ARIA"
+    }
+  }
+}
+```
+
+After restarting Claude Desktop you can ask things like *"Which Glucose runs
+on COBAS-C311-01 are failing today?"* and Claude will call ARIA's tools.
+
+---
+
+## Technology stack
 
 | Tool | Version | Role |
 |------|---------|------|
@@ -107,112 +229,17 @@ bash scripts/generate_demo.sh
 | FastAPI | 0.116 | REST API + HTML page serving |
 | Uvicorn | 0.30 | ASGI server |
 | Jinja2 | 3.1 | HTML template engine |
-| Plotly.js | 2.32 | All interactive charts |
+| Plotly.js | 2.32 | Every interactive chart (PNG export built in) |
 | DoWhy | 0.11 | Causal model + ATE estimation |
 | pgmpy | 0.1.25 | DAG backend for DoWhy |
 | scikit-learn | 1.5 | Linear regression estimator |
 | pandas | 2.2 | Data loading and transformation |
-| numpy | 1.26 | Z-score computation |
-| SQLite | stdlib | QC result history |
+| numpy | 1.26 | z-score computation |
+| SQLite | stdlib | QC result history (idempotent inserts) |
 | MCP | 1.0 | AI assistant integration |
 | Docker | — | Container packaging |
 | GitHub Actions | — | CI/CD pipeline |
 | AWS EC2 | — | Production hosting |
-
----
-
-## Dashboard Pages
-
-| Page | Live URL | What it shows |
-|------|----------|---------------|
-| QC Overview | [/](http://3.78.247.13:8000/) | KPI cards, status donut chart, grouped bar by instrument, searchable QC status table |
-| Causal Analysis | [/causal](http://3.78.247.13:8000/causal) | ATE horizontal bar chart, 7-node causal DAG, detailed results table with impact ratings |
-| Root Cause Explainer | [/explainer](http://3.78.247.13:8000/explainer) | Failure slider (51 failures), z-score gauge, ranked contributing factors, counterfactual simulation |
-| Active Alerts | [/alerts](http://3.78.247.13:8000/alerts) | All current FAIL-status records with severity classification, Westgard rule reference cards |
-| Architecture | [/architecture](http://3.78.247.13:8000/architecture) | Interactive data flow diagram, tool stack chart, annotated file tree |
-
----
-
-## How the Causal Analysis Works
-
-ARIA constructs a domain-informed DAG with seven nodes:
-
-```
-lab_temp_c -----> z_score
-hours_since_cal -> z_score
-reagent_lot -----> z_score
-lab_temp_c -----> hours_since_cal
-```
-
-Using DoWhy's backdoor criterion, it estimates the average treatment effect of each upstream variable on the z-score. These ATEs are the numerical backbone of every explanation and simulation in the system.
-
-A 1-unit increase in `lab_temp_c` (1 degree above 22C) adds approximately +0.35 to the z-score deviation. A `hours_since_cal` increase of 10 hours contributes negative drift. Reagent lots are encoded as numerical bias offsets.
-
-Counterfactuals are computed analytically: the new z-score is the original adjusted by `(new_value - original_value) * ATE` for each changed variable.
-
----
-
-## QC Engine
-
-Six Westgard rules are evaluated per instrument-test-level combination with tiered time windows:
-
-| Rule | Type | Trigger |
-|------|------|---------|
-| 1-2s | Warning | \|z\| > 2.0 (most recent value) |
-| 1-3s | Rejection | \|z\| > 3.0 (most recent value) |
-| 2-2s | Rejection | Two consecutive values > 2.0 SD in same direction |
-| R-4s | Rejection | Range between consecutive values > 4 SD |
-| 4-1s | Rejection | Four consecutive values all > 1.0 SD in same direction |
-| 10x | Rejection | Ten consecutive values on the same side of the mean |
-
----
-
-## Data Sources
-
-The QC time-series data is synthetic by design. Real Westgard calibration logs are confidential in clinical settings. The synthetic generator is calibrated against real **MIMIC-IV Demo** lab distributions (PhysioNet, 2023) so that value ranges, units, and instrument variation are physiologically realistic.
-
-- 180 days of QC data
-- 3 instruments (INST-A, INST-B, INST-C)
-- 8 tests: Glucose, Creatinine, Sodium, Potassium, ALT, Hemoglobin, Calcium, Bilirubin
-- 3 QC levels per test
-- 19 reagent lots
-- 116,640 total records
-
----
-
-## System Architecture
-
-```
-MIMIC-IV Demo (PhysioNet)
-        |
-        v
-data/synthetic/generate.py   <-- calibrates value distributions
-        |
-        v
-data/synthetic/qc_data.csv   <-- 116,640 QC records (180 days)
-        |
-        v
-src/ingestion/loader.py      <-- CSV parsing, type coercion
-        |
-        +---> src/qc/rules.py        <-- Westgard engine (6 rules)
-        |
-        +---> src/causal/engine.py   <-- DoWhy DAG + ATE estimation
-                    |
-                    v
-             src/explainer/explainer.py   <-- root cause + counterfactuals
-                    |
-                    v
-             src/api/main.py              <-- FastAPI (port 8000)
-             src/storage/db.py            <-- SQLite persistence
-             src/mcp/server.py            <-- MCP tool server
-                    |
-                    v
-             dashboard/templates/         <-- HTML pages (Jinja2)
-             dashboard/static/            <-- CSS + Plotly.js charts
-                    |
-                    v
-             AWS EC2 (docker-compose + GitHub Actions)
-```
 
 ---
 
@@ -224,40 +251,33 @@ Live interactive docs: http://3.78.247.13:8000/docs
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | GET | `/summary` | Dataset summary statistics |
-| GET | `/qc/status` | QC status for all instrument-test-level combinations |
+| GET | `/qc/status` | QC status for all instrument-test-level combinations (idempotent) |
 | GET | `/qc/failures` | Only FAIL-status records |
+| GET | `/api/failures` | Out-of-control rows for the explainer (`severity=warn` or `fail`); returns `{total, shown, records}` |
+| GET | `/api/trend/options` | Available instruments / tests / QC levels for the trend dropdowns |
+| GET | `/api/trend` | z-score time series with optional filters and downsampling |
+| GET | `/api/export.csv` | Download a view as CSV (`view=qc|failures|trend|raw`) |
 | GET | `/causal/analysis` | ATE values from the causal model |
-| GET | `/causal/explain/{row_index}` | Root cause explanation for a specific failure |
+| GET | `/causal/explain/{row_index}` | Root cause + recommendation for a row |
 | POST | `/causal/counterfactual` | Counterfactual simulation |
-| GET | `/api/failures` | Paginated list of failed QC rows with original indices |
+| GET | `/causal/simulate/{row_index}` | curl-friendly counterfactual variant |
 | GET | `/db/recent` | Last N results from SQLite history |
 
 ---
 
-## MCP Server
+## Local development
 
-ARIA includes an MCP server that exposes its analysis as tools for AI assistants. To start it locally:
+The app is already live on AWS. Local setup is only needed if you want to
+modify the code.
 
-```bash
-make mcp
-```
-
-The server follows Anthropic's Model Context Protocol. It exposes QC status, causal analysis, and counterfactual simulation as callable tools for Claude or any MCP-compatible client.
-
----
-
-## Local Development (Optional)
-
-The app is already live on AWS. Local setup is only needed if you want to modify the code.
-
-**Requirements:** Python 3.11+, make
+**Requirements:** Python 3.11+, make.
 
 ```bash
 git clone https://github.com/Anas9-8/ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories.git
 cd ARIA-Automated-Root-cause-Intelligence-for-Analytical-Laboratories
 
 make setup     # creates .venv and installs dependencies
-make data      # generates synthetic QC dataset
+make data      # generates synthetic QC dataset (38,880 records)
 make run       # starts FastAPI on http://localhost:8000
 ```
 
@@ -267,7 +287,9 @@ make run       # starts FastAPI on http://localhost:8000
 docker-compose up --build -d
 ```
 
-The container builds, generates synthetic data, and starts the FastAPI server on port 8000. The `data/` directory is mounted as a volume so the SQLite database persists across restarts.
+The container builds, generates synthetic data, and starts the FastAPI server
+on port 8000. The `data/` directory is mounted as a volume so the SQLite
+database persists across restarts.
 
 ### Tests
 
@@ -275,45 +297,61 @@ The container builds, generates synthetic data, and starts the FastAPI server on
 make test
 ```
 
-- `tests/test_qc.py` — unit tests for all six Westgard rules
-- `tests/test_causal.py` — integration test for the causal engine and DAG loading
-- `tests/test_api.py` — FastAPI endpoint tests using httpx TestClient
+- `tests/test_qc.py` — unit tests for all six Westgard rules.
+- `tests/test_causal.py` — covers `prepare_causal_data`, the DAG shape, and the
+  fact that every edge terminates at the `z_score` outcome.
+- `tests/test_api.py` — FastAPI endpoint tests via httpx TestClient.
 
 ---
 
 ## Deployment on AWS EC2
 
-### How it works
-
 The deploy workflow (`.github/workflows/deploy.yml`) runs on every push to `main`:
 
 1. GitHub Actions SSHs into the EC2 instance using a stored private key.
 2. `git pull origin main` fetches the latest code.
-3. `docker-compose down --remove-orphans` stops and removes existing containers cleanly.
-4. `docker-compose up --build -d` rebuilds the image and starts the container.
-5. A retry loop polls `/health` every 5 seconds for up to 60 seconds.
-6. Final checks confirm `/causal` and `/docs` both respond before marking the deploy successful.
+3. `docker-compose down --remove-orphans` stops the existing container cleanly.
+4. `docker-compose up --build -d` rebuilds and starts.
+5. A retry loop polls `/health` every 5 s for up to 60 s.
+6. Final checks confirm `/causal` and `/docs` both respond before marking the
+   deploy successful.
 
-### GitHub Secrets required
+**Secrets**
 
 | Secret | Value |
 |--------|-------|
 | `EC2_HOST` | Public IP of the EC2 instance |
 | `EC2_SSH_KEY` | Contents of the private `.pem` key file |
 
-### Manual redeploy from EC2
+---
 
-```bash
-ssh -i ~/.ssh/aria-key.pem ec2-user@3.78.247.13
-cd ~/aria
-git pull origin main
-docker-compose down --remove-orphans
-docker-compose up --build -d
-```
+## Limitations & honest notes
+
+- **Synthetic data.** Distributions are MIMIC-IV-calibrated, but every record
+  was generated by `data/synthetic/generate.py`. The bias coefficients in the
+  generator (`lot_bias`, `temperature_effect`, `calibration_drift`) are
+  deliberately small so the resulting z-scores stay in the realistic
+  `[−4, +4]` range.
+- **Lot bias semantics.** `-03` lots carry roughly **−2 %** mean bias, `-02`
+  roughly **−0.8 %**, `-01` is the reference. The explainer labels in the UI
+  match these coefficients exactly. (Earlier revisions of the project showed
+  larger numbers — those have been corrected.)
+- **Mediator nodes.** Earlier revisions had `reagent_activity` and `drift` as
+  mediators in the DAG, but those were *constructed* deterministically from
+  the inputs, which conflated a synthetic feature with a measured one. The
+  current DAG models direct effects only and uses the continuous z-score as
+  the outcome, so each ATE is a real σ-per-unit estimate.
+- **Westgard "warnings" vs "failures".** `|z| > 2σ` is a Westgard *warning*
+  (1-2s); rejection requires `|z| > 3σ` (1-3s) or a multi-point rule. The API
+  surfaces both: `/api/failures?severity=warn` for warnings, `severity=fail`
+  for rejections, default returns both with a per-row severity tag.
+- **Authentication.** The live deployment is intentionally open for demo
+  purposes — there is no auth, no rate limiting. Do not point anything you
+  care about at it.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 ARIA/
@@ -321,68 +359,50 @@ ARIA/
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
-├── .env.example
 ├── README.md
 ├── README_DE.md
 │
-├── .github/
-│   └── workflows/
-│       └── deploy.yml           <- GitHub Actions CI/CD to AWS EC2
+├── .github/workflows/deploy.yml      <- GitHub Actions CI/CD
 │
 ├── data/
-│   ├── raw/mimic_demo/          <- MIMIC-IV hospital lab data (PhysioNet)
+│   ├── raw/mimic_demo/               <- MIMIC-IV reference data
 │   ├── processed/
 │   └── synthetic/
-│       ├── generate.py          <- Creates ~116,640 synthetic QC records
+│       ├── generate.py               <- 38,880 synthetic QC records
 │       └── qc_data.csv
 │
 ├── src/
-│   ├── ingestion/loader.py      <- CSV parsing, timestamps, summary stats
-│   ├── qc/rules.py              <- Westgard rules with tiered time windows
-│   ├── causal/engine.py         <- DoWhy DAG + ATE estimation
-│   ├── explainer/explainer.py   <- Root cause text + counterfactuals
-│   ├── storage/db.py            <- SQLite: init / save / query
-│   ├── api/main.py              <- FastAPI backend (port 8000)
-│   └── mcp/server.py            <- MCP server for AI assistants
+│   ├── ingestion/loader.py           <- CSV parsing + summary stats
+│   ├── qc/rules.py                   <- Westgard rules + tiered windows
+│   ├── causal/engine.py              <- DoWhy DAG + ATE on z-score
+│   ├── explainer/explainer.py        <- Root cause + counterfactual
+│   ├── storage/db.py                 <- SQLite, idempotent inserts
+│   ├── api/main.py                   <- FastAPI backend (port 8000)
+│   └── mcp/server.py                 <- MCP server for AI assistants
 │
 ├── dashboard/
-│   ├── static/
-│   │   ├── style.css            <- Dark design system (CSS custom properties)
-│   │   └── charts.js            <- All Plotly.js chart functions
+│   ├── static/style.css              <- Dark design system
+│   ├── static/charts.js              <- Plotly chart functions
 │   └── templates/
-│       ├── base.html            <- Shared sidebar + topbar layout
-│       ├── overview.html        <- QC status: KPIs, charts, table
-│       ├── causal.html          <- ATE chart, DAG, results table
-│       ├── explainer.html       <- Failure slider, gauge, counterfactuals
-│       ├── alerts.html          <- Active failures + rule reference
-│       └── architecture.html   <- Data flow, tool stack, file tree
+│       ├── base.html
+│       ├── overview.html             <- KPI + trend + donut + bar + table
+│       ├── causal.html               <- ATE chart, DAG, results table
+│       ├── explainer.html            <- Counterfactual hero card
+│       ├── alerts.html               <- Active failures + Westgard cards
+│       ├── mcp.html                  <- MCP integration page
+│       └── architecture.html         <- Data flow + tool stack + tree
 │
-├── scripts/
-│   ├── generate_demo.py         <- Playwright screenshot -> GIF pipeline
-│   └── generate_demo.sh         <- One-command demo regeneration
-│
-├── tests/
-│   ├── test_qc.py
-│   ├── test_causal.py
-│   └── test_api.py
-│
-└── docs/
-    ├── architecture.md
-    └── demo.gif
+├── scripts/generate_demo.py          <- Playwright → GIF pipeline
+└── tests/
+    ├── test_qc.py
+    ├── test_causal.py
+    └── test_api.py
 ```
-
----
-
-## Future Work
-
-- User-uploadable QC datasets (CSV or HL7 FHIR)
-- Per-instrument calibration scheduling recommendations based on drift trends
-- Anomaly detection on reagent lot transitions using changepoint analysis
-- Integration with LIMS systems over HL7 v2 or FHIR R4
-- Multi-lab tenant support with per-site DAG calibration
 
 ---
 
 ## Author
 
-Built by a Biotechnologischer Assistent (BTA) with machine learning engineering training. Domain knowledge from real laboratory QC practice combined with causal AI methods from the PyWhy ecosystem.
+Built by a Biotechnologischer Assistent (BTA) with machine-learning engineering
+training. Domain knowledge from real lab QC practice combined with causal AI
+methods from the PyWhy ecosystem.

@@ -40,10 +40,10 @@
 <!-- Explanation info box -->
 <div class="info-box">
   <strong>How to read the ATE chart:</strong>
-  Positive bars (red) = this variable <strong>increases</strong> the z-score deviation when it increases — pushing QC toward failure.
-  Each 1°C above 22°C adds approximately +0.35 to the z-score deviation.
-  Long calibration gaps (>36 h) add systematic negative drift.
-  Reagent lot effects are smaller but detectable.
+  Each bar is the σ-change in QC z-score per <em>unit</em> change in that variable.
+  Positive bars (red) push the z-score up; negative bars (cyan) pull it down.
+  The numbers are small because they are per-unit — a 5 °C heat excursion is 5× the temperature ATE.
+  Calibration gaps add a small negative drift per hour, accumulating across long shifts.
 </div>
 
 <!-- Detailed results table -->
@@ -84,16 +84,16 @@ const ATE_LABELS = {
 
 function interpretATE(v) {
   const a = Math.abs(v);
-  if (a > 0.3)  return v > 0 ? "Strongly increases failure risk" : "Strongly reduces failure risk";
-  if (a > 0.15) return "Moderate causal effect";
-  if (a > 0.05) return "Weak but detectable effect";
-  return "Negligible effect";
+  if (a > 0.05)  return v > 0 ? "Strongly raises z-score (per unit)"   : "Strongly lowers z-score (per unit)";
+  if (a > 0.01)  return v > 0 ? "Moderately raises z-score (per unit)" : "Moderately lowers z-score (per unit)";
+  if (a > 0.001) return "Weak but detectable σ-effect per unit";
+  return "Negligible σ-effect per unit";
 }
 
 function impactBadge(v) {
   const a = Math.abs(v);
-  if (a > 0.3)  return `<span class="badge badge-fail">HIGH</span>`;
-  if (a > 0.15) return `<span class="badge badge-warn">MEDIUM</span>`;
+  if (a > 0.05)  return `<span class="badge badge-fail">HIGH</span>`;
+  if (a > 0.01)  return `<span class="badge badge-warn">MEDIUM</span>`;
   return `<span class="badge badge-pass">LOW</span>`;
 }
 
