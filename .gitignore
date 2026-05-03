@@ -38,5 +38,11 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# SSH / TLS private keys — never commit these
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Personal interview prep
 story.md
