@@ -17,13 +17,22 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            set -e
+            set -euxo pipefail
             cd ~/aria
 
-            git pull origin main
+            # Force EC2 to match GitHub exactly — no silent no-ops.
+            git fetch origin main
+            git reset --hard origin/main
+            git log --oneline -1
 
+            # Show what's actually on disk so the workflow log proves the new files are present.
+            ls dashboard/templates/ | sort
+            grep -c "hero-card" dashboard/static/style.css || true
+
+            # Hard rebuild — defeat any Docker layer cache.
             docker-compose down --remove-orphans
-            docker-compose up --build -d
+            docker-compose build --no-cache aria
+            docker-compose up -d --force-recreate
 
             echo "Waiting for app to become ready..."
             for i in $(seq 1 12); do
