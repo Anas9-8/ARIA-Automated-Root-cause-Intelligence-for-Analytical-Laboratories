@@ -396,7 +396,7 @@ ARIA/
 │   ├── raw/mimic_demo/          <- MIMIC-IV hospital lab data (PhysioNet)
 │   ├── processed/
 │   └── synthetic/
-│       ├── generate.py          <- Creates ~116,640 synthetic QC records
+│       ├── generate.py          <- Creates 38,880 synthetic QC records
 │       └── qc_data.csv
 │
 ├── src/

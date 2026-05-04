@@ -124,15 +124,15 @@ Die vollstandige Analyse — von Roh-QC-Daten bis zur kontrafaktischen Antwort �
 ARIA erstellt einen domaneninformierten DAG mit sieben Knoten:
 
 ```
-lab_temp_c -----> z_score
-hours_since_cal -> z_score
-reagent_lot -----> z_score
-lab_temp_c -----> hours_since_cal
+lab_temp_c       -> z_score
+humidity_pct     -> z_score
+reagent_lot_id   -> z_score
+hours_since_cal  -> z_score
 ```
 
-Mithilfe des Backdoor-Kriteriums von DoWhy wird der durchschnittliche Behandlungseffekt jeder vorgelagerten Variable auf den Z-Score geschatzt.
+Die Zielvariable ist der kontinuierliche Z-Score (in σ-Einheiten). Mithilfe des Backdoor-Kriteriums von DoWhy wird der durchschnittliche Behandlungseffekt (ATE) jeder vorgelagerten Variable auf den Z-Score geschatzt — in σ pro Einheit Behandlung.
 
-Eine Erhohung von `lab_temp_c` um 1 Grad (uber 22C) addiert ca. +0,35 zur Z-Score-Abweichung. Eine Erhohung von `hours_since_cal` um 10 Stunden fuhrt zu negativem Drift. Reagenz-Los-Effekte werden als numerische Bias-Offsets kodiert.
+Beispiel: ein ATE von `+0,012` fur `lab_temp_c` bedeutet, dass jedes °C uber Raumtemperatur den Z-Score im Mittel um etwa 0,012 σ erhoht; eine Hitze-Exkursion von 5 °C ergibt also rund 0,06 σ. Die Pro-Einheit-Werte sind absichtlich klein, weil die Labortemperatur im Normalbetrieb nur um wenige Grad schwankt.
 
 Kontrafakten werden analytisch berechnet: neuer Z-Score = ursprunglicher Z-Score + Summe((neuer Wert - alter Wert) * ATE).
 
@@ -158,11 +158,12 @@ Sechs Westgard-Regeln werden pro Gerat-Test-Level-Kombination ausgewertet:
 Die QC-Zeitreihendaten sind synthetisch generiert. Echte Westgard-Kalibrierungsprotokolle sind in klinischen Einrichtungen vertraulich. Der synthetische Generator ist gegen echte **MIMIC-IV-Demo**-Laborverteilungen (PhysioNet, 2023) kalibriert.
 
 - 180 Tage QC-Daten
-- 3 Gerate (INST-A, INST-B, INST-C)
+- 3 Gerate (`COBAS-C311-01`, `COBAS-C311-02`, `COBAS-C501-03`)
+- 3 tagliche QC-Laufe pro Gerat (07:00 / 12:00 / 18:00)
 - 8 Tests: Glucose, Kreatinin, Natrium, Kalium, ALT, Hamoglobin, Kalzium, Bilirubin
-- 3 QC-Stufen pro Test
-- 19 Reagenz-Lose
-- 116.640 Datensatze insgesamt
+- 3 QC-Stufen pro Test (L1 / L2 / L3)
+- 19 Reagenz-Lose — `-01` Referenz, `-02` ≈ −0,8 % Bias, `-03` ≈ −2 % Bias
+- 38.880 Datensatze insgesamt (Z-Scores auf ±4 σ begrenzt)
 
 ---
 
